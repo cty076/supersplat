@@ -14,6 +14,10 @@ class DroppedFile {
 
 type DropHandlerFunc = (files: Array<DroppedFile>, resetScene: boolean) => void;
 
+const getRelativeFilename = (file: File) => {
+    return (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+};
+
 const resolveDirectories = (entries: Array<FileSystemEntry>): Promise<Array<FileSystemFileEntry>> => {
     const promises: Promise<Array<FileSystemFileEntry>>[] = [];
     const result: Array<FileSystemFileEntry> = [];
@@ -53,9 +57,10 @@ const resolveDirectories = (entries: Array<FileSystemEntry>): Promise<Array<File
 
 const removeCommonPrefix = (urls: Array<DroppedFile>) => {
     const split = (pathname: string) => {
-        const parts = pathname.split(path.delimiter);
+        const delimiter = path.delimiter ?? '/';
+        const parts = pathname.replace(/\\/g, delimiter).split(delimiter);
         const base = parts[0];
-        const rest = parts.slice(1).join(path.delimiter);
+        const rest = parts.slice(1).join(delimiter);
         return [base, rest];
     };
     while (true) {
@@ -92,13 +97,20 @@ const CreateDropHandler = (target: HTMLElement, dropHandler: DropHandlerFunc) =>
 
     const drop = async (ev: DragEvent) => {
         ev.preventDefault();
+        ev.stopPropagation();
 
-        const items = Array.from(ev.dataTransfer.items);
+        const dataTransfer = ev.dataTransfer;
+        if (!dataTransfer) {
+            return;
+        }
+
+        const items = Array.from(dataTransfer.items ?? []);
 
         // handle single file drops so documents can propagate the filesystemfilehandle
         if (items.length === 1) {
             const item = items[0];
-            if (item.getAsFileSystemHandle && item.webkitGetAsEntry().isFile) {
+            const entry = item.webkitGetAsEntry?.();
+            if (item.getAsFileSystemHandle && entry?.isFile) {
                 const handle = await item.getAsFileSystemHandle();
                 if (handle?.kind === 'file') {
                     const fileHandle = handle as FileSystemFileHandle;
@@ -112,21 +124,34 @@ const CreateDropHandler = (target: HTMLElement, dropHandler: DropHandlerFunc) =>
 
         // Map to entries first
         const entries = items
-        .map(item => item.webkitGetAsEntry())
-        .filter(v => v);
+        .map(item => item.webkitGetAsEntry?.())
+        .filter((entry): entry is FileSystemEntry => !!entry);
 
-        // resolve directories to files
-        const resolvedEntries = await resolveDirectories(entries);
+        let files: DroppedFile[] = [];
 
-        const files = await Promise.all(
-            resolvedEntries.map((entry) => {
-                return new Promise<DroppedFile>((resolve, reject) => {
-                    entry.file((entryFile: any) => {
-                        resolve(new DroppedFile(entry.fullPath.substring(1), entryFile));
+        if (entries.length > 0) {
+            // resolve directories to files
+            const resolvedEntries = await resolveDirectories(entries);
+
+            files = await Promise.all(
+                resolvedEntries.map((entry) => {
+                    return new Promise<DroppedFile>((resolve, reject) => {
+                        entry.file((entryFile: any) => {
+                            resolve(new DroppedFile(entry.fullPath.substring(1), entryFile));
+                        });
                     });
-                });
-            })
-        );
+                })
+            );
+        } else {
+            // Firefox does not expose Chromium's directory entry API. Fall back
+            // to the flat FileList when the browser provides one.
+            files = Array.from(dataTransfer.files ?? [])
+            .map(file => new DroppedFile(getRelativeFilename(file), file));
+        }
+
+        if (files.length === 0) {
+            return;
+        }
 
         if (files.length > 1) {
             // if all files share a common filename prefix, remove it

@@ -6,3 +6,6 @@ dist
 .vscode
 .cursor
 .idea
+.npm-cache
+serve-4dgs*.log
+desktop-dist

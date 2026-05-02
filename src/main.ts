@@ -1,6 +1,7 @@
 import { WebPCodec } from '@playcanvas/splat-transform';
 import { Color, createGraphicsDevice } from 'playcanvas';
 
+import { registerNative4DGSEvents } from './4dgs-native-runtime';
 import { registerCameraPosesEvents } from './camera-poses';
 import { registerDocEvents } from './doc';
 import { EditHistory } from './edit-history';
@@ -242,6 +243,7 @@ const main = async () => {
     // register events that need scene or other dependencies
     registerEditorEvents(events, editHistory, scene);
     registerSelectionEvents(events, scene);
+    registerNative4DGSEvents(events, scene);
     registerDocEvents(scene, events);
     registerRenderEvents(scene, events);
     initFileHandler(scene, events, editorUI.appContainer.dom);
@@ -252,16 +254,18 @@ const main = async () => {
     // handle load params
     const loadList = url.searchParams.getAll('load');
     const filenameList = url.searchParams.getAll('filename');
+    const upAxisList = url.searchParams.getAll('upAxis');
     for (const [i, value] of loadList.entries()) {
         const decoded = decodeURIComponent(value);
         const filename = i < filenameList.length ?
             decodeURIComponent(filenameList[i]) :
             decoded.split('/').pop();
+        const upAxis = i < upAxisList.length ? decodeURIComponent(upAxisList[i]) : undefined;
 
         await events.invoke('import', [{
             filename,
             url: decoded
-        }]);
+        }], false, upAxis);
     }
 
 

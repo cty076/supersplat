@@ -18,6 +18,7 @@ import {
 import { Element, ElementType } from './element';
 import { Serializer } from './serializer';
 import { vertexShader, fragmentShader, gsplatCenter } from './shaders/splat-shader';
+import { fillIdentityTransformIndices } from './splat-frame-init';
 import { State } from './splat-state';
 import { Transform } from './transform';
 import { TransformPalette } from './transform-palette';
@@ -86,6 +87,7 @@ class Splat extends Element {
         this.numSplats = splatData.numSplats;
 
         this.entity = new Entity('splatEntitiy');
+        this.entity.enabled = false;
         this.entity.setEulerAngles(orientation);
         this.entity.addComponent('gsplat', { asset });
 
@@ -132,6 +134,8 @@ class Splat extends Element {
         // create the state texture
         this.stateTexture = createTexture('splatState', PIXELFORMAT_R8);
         this.transformTexture = createTexture('splatTransform', PIXELFORMAT_R16U);
+        fillIdentityTransformIndices(this.transformTexture.lock() as Uint16Array);
+        this.transformTexture.unlock();
 
         // create the transform palette
         this.transformPalette = new TransformPalette(device);
@@ -166,6 +170,9 @@ class Splat extends Element {
     destroy() {
         super.destroy();
         this.entity.destroy();
+        this.stateTexture?.destroy();
+        this.transformTexture?.destroy();
+        this.transformPalette?.destroy();
         this.asset.registry.remove(this.asset);
         this.asset.unload();
     }
@@ -260,7 +267,7 @@ class Splat extends Element {
     set name(newName: string) {
         if (newName !== this.name) {
             this._name = newName;
-            this.scene.events.fire('splat.name', this);
+            this.scene?.events.fire('splat.name', this);
         }
     }
 
@@ -304,6 +311,7 @@ class Splat extends Element {
 
         // we must update state in case the state data was loaded from ply
         await this.updateState();
+        this.entity.enabled = this.visible;
     }
 
     remove() {
@@ -513,7 +521,7 @@ class Splat extends Element {
     set transparency(value: number) {
         if (value !== this._transparency) {
             this._transparency = value;
-            this.scene.events.fire('splat.transparency', this);
+            this.scene?.events.fire('splat.transparency', this);
         }
     }
 

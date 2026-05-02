@@ -1,5 +1,6 @@
 import { Button, Container, Label } from '@playcanvas/pcui';
 
+import type { FourDGSManifest } from '../4dgs-manifest';
 import { Events } from '../events';
 import { ShortcutManager } from '../shortcut-manager';
 import { Splat } from '../splat';
@@ -73,8 +74,19 @@ class StatusBar extends Container {
         const lockedValue = createStat(localize('status-bar.locked'));
         const deletedValue = createStat(localize('status-bar.deleted'));
 
+        const fourDGSStatus = new Container({
+            class: 'status-bar-4dgs'
+        });
+        const fourDGSLabel = new Label({
+            class: 'status-bar-4dgs-label',
+            text: ''
+        });
+        fourDGSStatus.append(fourDGSLabel);
+        fourDGSStatus.hidden = true;
+
         this.append(timelineButton);
         this.append(splatDataButton);
+        this.append(fourDGSStatus);
         this.append(statsContainer);
 
         // register tooltips
@@ -100,6 +112,30 @@ class StatusBar extends Container {
 
         events.on('timelinePanel.toggle', () => {
             setActivePanel(activePanel === 'timeline' ? '' : 'timeline');
+        });
+
+        let fourDGSManifest: FourDGSManifest | null = null;
+        let currentFrame = events.invoke('timeline.frame') as number;
+
+        const updateFourDGSStatus = () => {
+            if (!fourDGSManifest) {
+                fourDGSStatus.hidden = true;
+                return;
+            }
+
+            fourDGSStatus.hidden = false;
+            fourDGSLabel.text = `4DGS ${fourDGSManifest.sceneName} | 第 ${currentFrame + 1} / ${fourDGSManifest.frameCount} 帧 | ${fourDGSManifest.frameRate} fps`;
+        };
+
+        events.on('4dgs.package', (manifest: FourDGSManifest) => {
+            fourDGSManifest = manifest;
+            currentFrame = events.invoke('timeline.frame') as number;
+            updateFourDGSStatus();
+        });
+
+        events.on('timeline.frame', (frame: number) => {
+            currentFrame = frame;
+            updateFourDGSStatus();
         });
 
         // Update stats from splat state

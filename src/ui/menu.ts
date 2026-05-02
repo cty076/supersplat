@@ -186,12 +186,27 @@ class Menu extends Container {
             isEnabled: () => !events.invoke('scene.empty'),
             onSelect: async () => await events.invoke('doc.saveAs')
         }, {
+            text: '\u4fdd\u5b58 4DGS \u4f1a\u8bdd',
+            icon: createSvg(sceneSave),
+            isEnabled: () => events.invoke('4dgs.session.canSave'),
+            onSelect: async () => await events.invoke('4dgs.session.save')
+        }, {
+            text: '\u6253\u5f00 4DGS \u4f1a\u8bdd',
+            icon: createSvg(sceneOpen),
+            onSelect: async () => await events.invoke('4dgs.session.open')
+        }, {
             // separator
         }, {
             text: localize('menu.file.import', { ellipsis: true }),
             icon: createSvg(sceneImport),
             onSelect: async () => {
                 await events.invoke('scene.import');
+            }
+        }, {
+            text: '打开 4DGS / 动画文件夹',
+            icon: createSvg(sceneOpen),
+            onSelect: async () => {
+                await events.invoke('scene.openAnimation');
             }
         }, {
             text: localize('menu.file.export'),

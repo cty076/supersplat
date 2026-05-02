@@ -1,6 +1,6 @@
 {
     "name": "supersplat",
-    "version": "2.24.5",
+    "version": "2.24.5-4dgs.10",
     "author": "PlayCanvas<support@playcanvas.com>",
     "homepage": "https://playcanvas.com/supersplat/editor",
     "description": "3D Gaussian Splat Editor",
@@ -12,19 +12,33 @@
         "editor"
     ],
     "license": "MIT",
-    "main": "index.js",
+    "main": "electron/main.cjs",
     "scripts": {
         "build": "rollup -c",
         "watch": "rollup -c -w",
         "serve": "serve dist -C",
         "develop": "cross-env BUILD_TYPE=debug concurrently --kill-others \"npm run watch\" \"npm run serve\"",
         "develop:auto-launch": "concurrently --kill-others \"xdg-open 'http://localhost:3000/'\" \"npm run watch\" \"npm run serve\"",
-        "lint": "eslint src"
+        "desktop": "npm run build && electron .",
+        "desktop:smoke": "npm run build && cross-env ELECTRON_SMOKE_TEST=1 electron .",
+        "desktop:pack": "npm run build && electron-builder --dir",
+        "lint": "eslint src",
+        "test:4dgs": "node scripts/test-4dgs-manifest.mjs",
+        "test:4dgs-native": "node scripts/test-4dgs-native.mjs",
+        "test:orientation": "node scripts/test-import-orientation.mjs",
+        "test:4dgs-session": "node scripts/test-4dgs-session.mjs",
+        "test:ply-sequence-cache": "node scripts/test-ply-sequence-cache.mjs",
+        "test:ply-sequence-clip-runtime": "node scripts/test-ply-sequence-clip-runtime.mjs",
+        "test:ply-sequence-runtime": "node scripts/test-ply-sequence-runtime.mjs",
+        "test:ply-sequence-swap-policy": "node scripts/test-ply-sequence-swap-policy.mjs",
+        "test:splat-frame-init": "node scripts/test-splat-frame-init.mjs",
+        "test:splat-resource-lifecycle": "node scripts/test-splat-resource-lifecycle.mjs",
+        "test:desktop": "node scripts/test-desktop-config.mjs"
     },
     "devDependencies": {
         "@playcanvas/eslint-config": "2.1.0",
-        "@playcanvas/splat-transform": "1.10.2",
         "@playcanvas/pcui": "5.8.0",
+        "@playcanvas/splat-transform": "1.10.2",
         "@rollup/plugin-alias": "6.0.0",
         "@rollup/plugin-image": "3.0.3",
         "@rollup/plugin-json": "6.1.0",
@@ -39,6 +53,8 @@
         "concurrently": "9.2.1",
         "cors": "2.8.6",
         "cross-env": "10.1.0",
+        "electron": "^41.3.0",
+        "electron-builder": "^26.8.1",
         "eslint": "9.39.4",
         "eslint-import-resolver-typescript": "4.4.4",
         "globals": "17.5.0",
@@ -54,5 +70,23 @@
         "serve": "14.2.6",
         "tslib": "2.8.1",
         "typescript": "5.9.3"
+    },
+    "build": {
+        "appId": "local.supersplat.4dgs",
+        "productName": "4DGS Viewer",
+        "asar": false,
+        "directories": {
+            "output": "desktop-dist"
+        },
+        "files": [
+            "dist/**/*",
+            "electron/**/*",
+            "package.json"
+        ],
+        "win": {
+            "target": [
+                "dir"
+            ]
+        }
     }
 }

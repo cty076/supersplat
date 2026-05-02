@@ -35,22 +35,25 @@ self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(cacheName)
         .then((cache) => {
-            cache.addAll(cacheUrls);
+            return cache.addAll(cacheUrls);
         })
+        .then(() => self.skipWaiting())
     );
 });
 
-self.addEventListener('activate', () => {
+self.addEventListener('activate', (event) => {
     console.log(`activating v${appVersion}`);
 
     // delete the old caches once this one is activated
-    caches.keys().then((names) => {
-        for (const name of names) {
-            if (name !== cacheName) {
-                caches.delete(name);
-            }
-        }
-    });
+    event.waitUntil(
+        caches.keys()
+        .then((names) => {
+            return Promise.all(names.map((name) => {
+                return name !== cacheName ? caches.delete(name) : Promise.resolve(false);
+            }));
+        })
+        .then(() => self.clients.claim())
+    );
 });
 
 self.addEventListener('fetch', (event) => {

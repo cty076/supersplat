@@ -8,6 +8,10 @@ interface ShowOptions {
     message: string;
     header?: string;
     link?: string;
+    okText?: string;
+    cancelText?: string;
+    yesText?: string;
+    noText?: string;
 }
 
 class Popup extends Container {
@@ -129,6 +133,11 @@ class Popup extends Container {
             text.text = options.message;
 
             const { type, link } = options;
+
+            okButton.text = options.okText ?? localize('popup.ok');
+            cancelButton.text = options.cancelText ?? localize('popup.cancel');
+            yesButton.text = options.yesText ?? localize('popup.yes');
+            noButton.text = options.noText ?? localize('popup.no');
 
             ['error', 'info', 'yesno', 'okcancel'].forEach((t) => {
                 text.class[t === type ? 'add' : 'remove'](t);

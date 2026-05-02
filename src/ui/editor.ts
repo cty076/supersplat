@@ -76,7 +76,7 @@ class EditorUI {
         // app label
         const appLabel = new Label({
             id: 'app-label',
-            text: `SUPERSPLAT v${version}`
+            text: `4DGS Viewer v${version}`
         });
 
         // cursor label

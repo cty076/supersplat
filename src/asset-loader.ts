@@ -1,20 +1,10 @@
-import { getInputFormat, ReadFileSystem } from '@playcanvas/splat-transform';
-import { AppBase, Asset, GSplatResource, Vec3 } from 'playcanvas';
+import { ReadFileSystem } from '@playcanvas/splat-transform';
+import { AppBase, Asset, GSplatResource } from 'playcanvas';
 
 import { Events } from './events';
+import { getImportOrientation, normalizeImportUpAxis, type ImportUpAxis } from './import-orientation';
 import { loadGSplatData, validateGSplatData } from './io';
 import { Splat } from './splat';
-
-const getOrientation = (filename: string) => {
-    switch (getInputFormat(filename)) {
-        case 'spz':
-            return new Vec3(0, 0, 0);
-        case 'lcc':
-            return new Vec3(90, 0, 180);
-        default:
-            return new Vec3(0, 0, 180);
-    }
-};
 
 // handles loading gsplat assets using splat-transform
 class AssetLoader {
@@ -26,7 +16,7 @@ class AssetLoader {
         this.events = events;
     }
 
-    async load(filename: string, fileSystem: ReadFileSystem, animationFrame?: boolean, skipReorder?: boolean) {
+    async loadAsset(filename: string, fileSystem: ReadFileSystem, animationFrame?: boolean, skipReorder?: boolean) {
         if (!animationFrame) {
             this.events.fire('startSpinner');
         }
@@ -40,12 +30,17 @@ class AssetLoader {
             this.app.assets.add(asset);
             asset.resource = new GSplatResource(this.app.graphicsDevice, gsplatData);
 
-            return new Splat(asset, getOrientation(filename));
+            return asset;
         } finally {
             if (!animationFrame) {
                 this.events.fire('stopSpinner');
             }
         }
+    }
+
+    async load(filename: string, fileSystem: ReadFileSystem, animationFrame?: boolean, skipReorder?: boolean, upAxis?: ImportUpAxis) {
+        const asset = await this.loadAsset(filename, fileSystem, animationFrame, skipReorder);
+        return new Splat(asset, getImportOrientation(filename, normalizeImportUpAxis(upAxis)));
     }
 }
 

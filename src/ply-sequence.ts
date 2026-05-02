@@ -1,38 +1,51 @@
+import type { FourDGSFrameSource } from './4dgs-manifest';
 import { Events } from './events';
-import { Splat } from './splat';
+import { normalizeImportUpAxis, type ImportUpAxis } from './import-orientation';
+import { PlySequenceClip } from './ply-sequence-clip';
+
+type PlySequenceFrameInput = File | FourDGSFrameSource;
+
+const normalizeFrameSource = (frame: PlySequenceFrameInput): FourDGSFrameSource => {
+    if (frame instanceof File) {
+        return {
+            filename: frame.name,
+            contents: frame
+        };
+    }
+
+    return frame;
+};
 
 const registerPlySequenceEvents = (events: Events) => {
-    let sequenceFiles: File[] = [];
-    let sequenceSplat: Splat = null;
-    let sequenceFrame = -1;
-    let sequenceLoading = false;
-    let nextFrame = -1;
-    let loadingPromise: Promise<void> | null = null;
+    let sequenceFiles: FourDGSFrameSource[] = [];
+    let sequenceUpAxis: ImportUpAxis = 'y';
+    let sequenceClip: PlySequenceClip | null = null;
 
-    const setFrames = (files: File[]) => {
+    const ensureClip = () => {
+        if (!sequenceClip) {
+            sequenceClip = new PlySequenceClip(events);
+        }
+
+        return sequenceClip;
+    };
+
+    const setFrames = (files: PlySequenceFrameInput[], upAxis?: ImportUpAxis) => {
         // eslint-disable-next-line regexp/no-super-linear-backtracking
         const regex = /(.*?)(\d+)(?:\.compressed)?\.ply$/;
 
-        // sort frames by trailing number, if it exists
-        const sorter = (a: File, b: File) => {
-            const avalue = a.name?.toLowerCase().match(regex)?.[2];
-            const bvalue = b.name?.toLowerCase().match(regex)?.[2];
+        const sorter = (a: FourDGSFrameSource, b: FourDGSFrameSource) => {
+            const avalue = a.filename?.toLowerCase().match(regex)?.[2];
+            const bvalue = b.filename?.toLowerCase().match(regex)?.[2];
             return (avalue && bvalue) ? parseInt(avalue, 10) - parseInt(bvalue, 10) : 0;
         };
 
-        sequenceFiles = files.slice();
+        sequenceFiles = files.map(normalizeFrameSource);
         sequenceFiles.sort(sorter);
-        events.fire('timeline.frames', sequenceFiles.length);
-    };
+        sequenceUpAxis = normalizeImportUpAxis(upAxis);
 
-    // wait for the next render to complete
-    const waitForRender = () => {
-        return new Promise<void>((resolve) => {
-            const off = events.on('postrender', () => {
-                off.off();
-                resolve();
-            });
-        });
+        const clip = ensureClip();
+        clip.setFrames(sequenceFiles, sequenceUpAxis);
+        events.fire('timeline.frames', sequenceFiles.length);
     };
 
     const setFrame = async (frame: number) => {
@@ -40,16 +53,11 @@ const registerPlySequenceEvents = (events: Events) => {
             return;
         }
 
-        if (sequenceLoading) {
-            nextFrame = frame;
+        const clip = ensureClip();
+        if (frame === clip.currentFrame) {
             return;
         }
 
-        if (frame === sequenceFrame) {
-            return;
-        }
-
-        // if user changed the scene, confirm
         if (events.invoke('scene.dirty')) {
             const result = await events.invoke('showPopup', {
                 type: 'yesno',
@@ -62,91 +70,41 @@ const registerPlySequenceEvents = (events: Events) => {
             }
 
             events.fire('scene.clear');
-            sequenceSplat = null;
+            sequenceClip = null;
+            const newClip = ensureClip();
+            newClip.setFrames(sequenceFiles, sequenceUpAxis);
         }
 
-        sequenceLoading = true;
-
-        const file = sequenceFiles[frame];
-        const newSplat = await events.invoke('import', [{
-            filename: file.name,
-            contents: file
-        }], true) as Splat[];
-
-        // wait for the new splat to render before destroying the old one
-        // (forceRender is already set by updateState during import)
-        await waitForRender();
-
-        // destroy the previous frame
-        if (sequenceSplat) {
-            sequenceSplat.destroy();
-        }
-        sequenceFrame = frame;
-        sequenceSplat = newSplat[0];
-        sequenceLoading = false;
-
-        // initiate the next frame load
-        if (nextFrame !== -1) {
-            const frame = nextFrame;
-            nextFrame = -1;
-            setFrame(frame);
-        }
+        sequenceClip.requestFrame(frame);
     };
 
-    events.on('plysequence.setFrames', (files: File[]) => {
-        setFrames(files);
+    events.on('plysequence.setFrames', (files: PlySequenceFrameInput[], upAxis?: ImportUpAxis) => {
+        setFrames(files, upAxis);
     });
 
-    events.on('timeline.frame', async (frame: number) => {
-        await setFrame(frame);
+    events.on('timeline.frame', (frame: number) => {
+        setFrame(frame).catch(console.error);
     });
 
-    // Async function for video rendering to await PLY sequence frame loading
-    // Returns the newly loaded splat if a new frame was loaded, null otherwise
-    events.function('plysequence.setFrameAsync', async (frame: number): Promise<Splat | null> => {
+    events.function('plysequence.setFrameAsync', (frame: number) => {
         if (frame < 0 || frame >= sequenceFiles.length) {
             return null;
         }
 
-        // If already on the correct frame and not loading, we're done
-        if (sequenceFrame === frame && !sequenceLoading) {
+        const clip = ensureClip();
+        if (clip.currentFrame === frame) {
             return null;
         }
 
-        // If currently loading, wait for it to complete
-        if (sequenceLoading && loadingPromise) {
-            await loadingPromise;
-        }
+        return clip.showFrameAsync(frame);
+    });
 
-        // Check again after waiting - might have loaded our frame
-        if (sequenceFrame === frame) {
-            return null;
-        }
+    events.function('plysequence.currentFrame', () => {
+        return sequenceClip?.currentFrame ?? -1;
+    });
 
-        // Need to load the frame - create a promise we can await
-        let newSplatResult: Splat | null = null;
-        loadingPromise = (async () => {
-            sequenceLoading = true;
-
-            const file = sequenceFiles[frame];
-            const newSplat = await events.invoke('import', [{
-                filename: file.name,
-                contents: file
-            }], true) as Splat[];
-
-            // destroy the previous frame
-            if (sequenceSplat) {
-                sequenceSplat.destroy();
-            }
-            sequenceFrame = frame;
-            sequenceSplat = newSplat[0];
-            newSplatResult = newSplat[0];
-            sequenceLoading = false;
-            loadingPromise = null;
-        })();
-
-        await loadingPromise;
-        return newSplatResult;
+    events.on('scene.clear', () => {
+        sequenceClip = null;
     });
 };
 

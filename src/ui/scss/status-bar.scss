@@ -46,6 +46,21 @@
     padding-right: 8px;
 }
 
+.status-bar-4dgs {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 10px;
+    margin-left: 6px;
+    border-left: 1px solid $bcg-primary;
+}
+
+.status-bar-4dgs-label {
+    color: $clr-active;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
 .status-bar-stat {
     display: flex;
     flex-direction: row;
