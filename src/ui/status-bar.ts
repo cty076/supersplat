@@ -1,11 +1,16 @@
 import { Button, Container, Label } from '@playcanvas/pcui';
 
 import type { FourDGSManifest } from '../4dgs-manifest';
+import { formatNative4DGSMotionSummary, type Native4DGSManifest } from '../4dgs-native';
 import { Events } from '../events';
 import { ShortcutManager } from '../shortcut-manager';
 import { Splat } from '../splat';
 import { localize, formatInteger } from './localization';
 import { Tooltips } from './tooltips';
+
+type FourDGSStatusState =
+    | { kind: 'baked'; manifest: FourDGSManifest }
+    | { kind: 'native'; manifest: Native4DGSManifest };
 
 class StatusBar extends Container {
     constructor(events: Events, tooltips: Tooltips, args = {}) {
@@ -114,27 +119,58 @@ class StatusBar extends Container {
             setActivePanel(activePanel === 'timeline' ? '' : 'timeline');
         });
 
-        let fourDGSManifest: FourDGSManifest | null = null;
+        let fourDGSState: FourDGSStatusState | null = null;
         let currentFrame = events.invoke('timeline.frame') as number;
 
+        const formatNativeSummary = (manifest: Native4DGSManifest) => {
+            return formatNative4DGSMotionSummary(manifest)
+            .replace(`${manifest.pointCount} pts`, `${formatInteger(manifest.pointCount)} 点`)
+            .replace(`${manifest.keyframeCount} keys`, `${formatInteger(manifest.keyframeCount)} 关键帧`);
+        };
+
         const updateFourDGSStatus = () => {
-            if (!fourDGSManifest) {
+            if (!fourDGSState) {
                 fourDGSStatus.hidden = true;
                 return;
             }
 
             fourDGSStatus.hidden = false;
-            fourDGSLabel.text = `4DGS ${fourDGSManifest.sceneName} | 第 ${currentFrame + 1} / ${fourDGSManifest.frameCount} 帧 | ${fourDGSManifest.frameRate} fps`;
+            if (fourDGSState.kind === 'native') {
+                const nativeManifest = fourDGSState.manifest;
+                const frameText = `帧 ${currentFrame + 1} / ${nativeManifest.frameCount}`;
+                fourDGSLabel.text = `Native 4DGS ${nativeManifest.sceneName} | ${frameText} | ${formatNativeSummary(nativeManifest)} | ${nativeManifest.frameRate} fps`;
+            } else {
+                const bakedManifest = fourDGSState.manifest;
+                const frameText = `帧 ${currentFrame + 1} / ${bakedManifest.frameCount}`;
+                fourDGSLabel.text = `4DGS ${bakedManifest.sceneName} | ${frameText} | ${bakedManifest.frameRate} fps`;
+            }
         };
 
         events.on('4dgs.package', (manifest: FourDGSManifest) => {
-            fourDGSManifest = manifest;
+            fourDGSState = {
+                kind: 'baked',
+                manifest
+            };
+            currentFrame = events.invoke('timeline.frame') as number;
+            updateFourDGSStatus();
+        });
+
+        events.on('native4dgs.loaded', (_clip: unknown, manifest: Native4DGSManifest) => {
+            fourDGSState = {
+                kind: 'native',
+                manifest
+            };
             currentFrame = events.invoke('timeline.frame') as number;
             updateFourDGSStatus();
         });
 
         events.on('timeline.frame', (frame: number) => {
             currentFrame = frame;
+            updateFourDGSStatus();
+        });
+
+        events.on('scene.clear', () => {
+            fourDGSState = null;
             updateFourDGSStatus();
         });
 

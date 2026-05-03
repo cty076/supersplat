@@ -1,4 +1,4 @@
-type Native4DGSMotionEncoding = 'float32-le';
+type Native4DGSMotionEncoding = 'float32-le' | 'float16-le';
 type Native4DGSMotionLayout = 'keyframes-points-xyz' | 'keyframes-points-channels';
 type Native4DGSMotionChannel = 'xyz' | 'scale' | 'rotation';
 
@@ -53,6 +53,16 @@ const nativeMotionChannelSizes: Record<Native4DGSMotionChannel, number> = {
     xyz: 3,
     scale: 3,
     rotation: 4
+};
+
+const nativeMotionEncodingBytes: Record<Native4DGSMotionEncoding, number> = {
+    'float32-le': 4,
+    'float16-le': 2
+};
+
+const nativeMotionEncodingLabels: Record<Native4DGSMotionEncoding, string> = {
+    'float32-le': 'FP32',
+    'float16-le': 'FP16'
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -110,8 +120,8 @@ const parseMotion = (value: unknown): Native4DGSManifest['motion'] => {
         throw new Error('Invalid native 4DGS manifest: motion must be an object');
     }
 
-    if (value.encoding !== 'float32-le') {
-        throw new Error('Invalid native 4DGS manifest: motion.encoding must be float32-le');
+    if (value.encoding !== 'float32-le' && value.encoding !== 'float16-le') {
+        throw new Error('Invalid native 4DGS manifest: motion.encoding must be float32-le or float16-le');
     }
     if (value.layout !== 'keyframes-points-xyz' && value.layout !== 'keyframes-points-channels') {
         throw new Error('Invalid native 4DGS manifest: motion.layout must be keyframes-points-xyz or keyframes-points-channels');
@@ -136,7 +146,7 @@ const parseMotion = (value: unknown): Native4DGSManifest['motion'] => {
     }
 
     return {
-        encoding: 'float32-le',
+        encoding: value.encoding,
         layout: value.layout,
         channels
     };
@@ -184,8 +194,83 @@ const createNative4DGSUrlSources = (manifestUrl: string, files: { baseFile: stri
     };
 };
 
+const normalizeNativePackageFilename = (filename: string) => {
+    return filename.replace(/\\/g, '/').replace(/^\/+/, '');
+};
+
+const collectNative4DGSLocalSources = (
+    files: Native4DGSFileSource[],
+    manifestFile: Native4DGSFileSource,
+    manifest: Pick<Native4DGSManifest, 'baseFile' | 'motionFile'>
+): Native4DGSSources => {
+    const manifestName = normalizeNativePackageFilename(manifestFile.filename);
+    const manifestPrefix = manifestName.endsWith('manifest.json') ? manifestName.slice(0, -'manifest.json'.length) : '';
+
+    const resolveLocal = (relativeFilename: string) => {
+        const expected = normalizeNativePackageFilename(`${manifestPrefix}${relativeFilename}`).toLowerCase();
+        const suffix = normalizeNativePackageFilename(relativeFilename).toLowerCase();
+        const file = files.find((candidate) => {
+            const normalized = normalizeNativePackageFilename(candidate.filename).toLowerCase();
+            return normalized === expected || normalized.endsWith(`/${suffix}`);
+        });
+        if (!file) {
+            throw new Error(`Native 4DGS package is missing ${relativeFilename}`);
+        }
+        return file;
+    };
+
+    return {
+        base: resolveLocal(manifest.baseFile),
+        motion: resolveLocal(manifest.motionFile)
+    };
+};
+
 const getNativeMotionStride = (channels: Native4DGSMotionChannel[]) => {
     return channels.reduce((sum, channel) => sum + nativeMotionChannelSizes[channel], 0);
+};
+
+const getNativeMotionFloatCount = (manifest: Native4DGSManifest) => {
+    return manifest.pointCount * manifest.keyframeCount * getNativeMotionStride(manifest.motion.channels);
+};
+
+const getNativeMotionByteLength = (manifest: Native4DGSManifest) => {
+    return getNativeMotionFloatCount(manifest) * nativeMotionEncodingBytes[manifest.motion.encoding];
+};
+
+const formatNative4DGSMotionSummary = (manifest: Native4DGSManifest) => {
+    return `${manifest.pointCount} pts | ${manifest.keyframeCount} keys | ${manifest.motion.channels.join('+')} | ${nativeMotionEncodingLabels[manifest.motion.encoding]}`;
+};
+
+const halfFloatToNumber = (value: number) => {
+    const sign = (value & 0x8000) ? -1 : 1;
+    const exponent = (value >> 10) & 0x1f;
+    const fraction = value & 0x03ff;
+
+    if (exponent === 0) {
+        return sign * (fraction === 0 ? 0 : Math.pow(2, -14) * (fraction / 1024));
+    }
+    if (exponent === 0x1f) {
+        return fraction === 0 ? sign * Infinity : NaN;
+    }
+    return sign * Math.pow(2, exponent - 15) * (1 + fraction / 1024);
+};
+
+const decodeNativeMotionBuffer = (buffer: ArrayBuffer, encoding: Native4DGSMotionEncoding, expectedFloats?: number) => {
+    const byteLength = expectedFloats === undefined ? buffer.byteLength : expectedFloats * nativeMotionEncodingBytes[encoding];
+    if (buffer.byteLength !== byteLength) {
+        throw new Error(`Native 4DGS motion buffer has ${buffer.byteLength} bytes, expected ${byteLength}`);
+    }
+
+    if (encoding === 'float32-le') {
+        return new Float32Array(buffer);
+    }
+
+    const source = new Uint16Array(buffer);
+    const result = new Float32Array(source.length);
+    for (let i = 0; i < source.length; i++) {
+        result[i] = halfFloatToNumber(source[i]);
+    }
+    return result;
 };
 
 const getNativeMotionChannelOffset = (channels: Native4DGSMotionChannel[], target: Native4DGSMotionChannel) => {
@@ -240,6 +325,11 @@ export type {
 export {
     parseNative4DGSManifest,
     createNative4DGSUrlSources,
+    collectNative4DGSLocalSources,
+    decodeNativeMotionBuffer,
+    formatNative4DGSMotionSummary,
+    getNativeMotionFloatCount,
+    getNativeMotionByteLength,
     getNativeMotionStride,
     getNativeMotionChannelOffset,
     sampleNativeMotion,

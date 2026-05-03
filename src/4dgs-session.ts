@@ -1,4 +1,5 @@
 import type { FourDGSManifest } from './4dgs-manifest';
+import type { Native4DGSManifest } from './4dgs-native';
 import type { ImportUpAxis } from './import-orientation';
 
 type FourDGSSession = {
@@ -15,7 +16,7 @@ type FourDGSSession = {
 };
 
 type BuildFourDGSSessionArgs = {
-    manifest: FourDGSManifest;
+    manifest: FourDGSManifest | Native4DGSManifest;
     upAxis: ImportUpAxis;
     frame: number;
     timeline?: unknown;
@@ -60,10 +61,11 @@ const sessionFilename = (sceneName: string) => {
 
 const buildFourDGSSession = (args: BuildFourDGSSessionArgs): FourDGSSession => {
     const frame = Math.max(0, Math.min(args.manifest.frameCount - 1, Math.floor(args.frame)));
+    const packageExtension = args.manifest.format === '4dgs-native-trajectory' ? '4dgs-native' : '4dgs';
     return {
         format: '4dgs-viewer-session',
         version: 1,
-        packageName: `${args.manifest.sceneName}.4dgs`,
+        packageName: `${args.manifest.sceneName}.${packageExtension}`,
         sceneName: args.manifest.sceneName,
         upAxis: normalizeSessionUpAxis(args.upAxis),
         frame,

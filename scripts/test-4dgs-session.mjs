@@ -51,5 +51,30 @@ assert.throws(() => mod.parseFourDGSSession({ ...session, frame: 200 }), /frame 
 assert.equal(mod.sessionFilename('lego'), 'lego.4dgs-viewer.json');
 assert.equal(mod.sessionFilename(''), 'scene.4dgs-viewer.json');
 
+const nativeSession = mod.buildFourDGSSession({
+    manifest: {
+        format: '4dgs-native-trajectory',
+        version: 1,
+        sceneName: 'lego-native-half',
+        pointCount: 92095,
+        keyframeCount: 48,
+        frameCount: 160,
+        frameRate: 30,
+        baseFile: 'base.ply',
+        motionFile: 'motion.bin',
+        motion: {
+            encoding: 'float16-le',
+            layout: 'keyframes-points-channels',
+            channels: ['xyz', 'scale', 'rotation']
+        }
+    },
+    upAxis: 'y',
+    frame: 500
+});
+
+assert.equal(nativeSession.packageName, 'lego-native-half.4dgs-native');
+assert.equal(nativeSession.frame, 159);
+assert.equal(nativeSession.frameCount, 160);
+
 rmSync(outDir, { recursive: true, force: true });
 console.log('4DGS session tests passed');

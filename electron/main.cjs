@@ -30,6 +30,10 @@ const getSmokePackageRoot = () => {
     const value = process.env.ELECTRON_SMOKE_TEST_PACKAGE;
     return value ? path.resolve(value) : null;
 };
+const getSmokeTestTimeoutMs = () => {
+    const value = Number.parseInt(process.env.ELECTRON_SMOKE_TEST_TIMEOUT_MS ?? '', 10);
+    return Number.isFinite(value) && value >= 30000 ? value : 180000;
+};
 
 const registerAppProtocol = () => {
     const distDir = getDistDir();
@@ -76,12 +80,15 @@ const createAppUrl = () => {
 };
 
 const runFourDGSSmokeTest = async (win) => {
+    console.log('Electron smoke phase: renderer checks starting');
     const result = await win.webContents.executeJavaScript(`
         (async () => {
             const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
             const waitForEvents = async () => {
+                console.info('Electron smoke phase: waiting for events');
                 for (let i = 0; i < 200; i++) {
                     if (window.scene?.events) {
+                        console.info('Electron smoke phase: events ready');
                         return window.scene.events;
                     }
                     await delay(50);
@@ -91,6 +98,7 @@ const runFourDGSSmokeTest = async (win) => {
 
             const events = await waitForEvents();
             const isPackageActive = () => events.invoke('4dgs.package.active') || events.invoke('native4dgs.active');
+            console.info('Electron smoke phase: waiting for package active');
             for (let i = 0; i < 300; i++) {
                 if (isPackageActive()) {
                     break;
@@ -102,6 +110,7 @@ const runFourDGSSmokeTest = async (win) => {
                 throw new Error('4DGS package did not become active');
             }
 
+            console.info('Electron smoke phase: package active');
             const nativePackage = events.invoke('native4dgs.active');
             const currentFrame = () => nativePackage ? events.invoke('native4dgs.currentFrame') : events.invoke('plysequence.currentFrame');
             if (nativePackage) {
@@ -114,6 +123,7 @@ const runFourDGSSmokeTest = async (win) => {
             }
             events.fire('timeline.setPlaying', true);
 
+            console.info('Electron smoke phase: waiting for playback frame');
             let playbackFrame = currentFrame();
             for (let i = 0; i < 300; i++) {
                 if (playbackFrame > 1) {
@@ -123,11 +133,13 @@ const runFourDGSSmokeTest = async (win) => {
                 playbackFrame = currentFrame();
             }
             events.fire('timeline.setPlaying', false);
+            console.info('Electron smoke phase: playback checked ' + playbackFrame);
 
             const selection = events.invoke('selection');
             if (!selection?.entity) {
                 throw new Error('4DGS selection is missing an entity after load');
             }
+            console.info('Electron smoke phase: moving selection');
             events.fire('tool.move');
             await delay(100);
             const pivot = events.invoke('pivot');
@@ -137,9 +149,11 @@ const runFourDGSSmokeTest = async (win) => {
             pivot.moveTRS(movedPosition, pivot.transform.rotation, pivot.transform.scale);
             pivot.end();
             await delay(200);
+            console.info('Electron smoke phase: moving camera');
             window.scene.camera.setAzimElev(window.scene.camera.azim + 15, window.scene.camera.elevation + 5, 0);
             window.scene.forceRender = true;
             await delay(200);
+            console.info('Electron smoke phase: renderer checks complete');
 
             return {
                 frame: events.invoke('timeline.frame'),
@@ -152,7 +166,9 @@ const runFourDGSSmokeTest = async (win) => {
             };
         })();
     `, true);
+    console.log(`Electron smoke phase: renderer checks result ${JSON.stringify(result)}`);
 
+    console.log('Electron smoke phase: capture canvas rect');
     const canvasRect = await win.webContents.executeJavaScript(`
         (() => {
             const canvas = document.querySelector('canvas');
@@ -165,7 +181,9 @@ const runFourDGSSmokeTest = async (win) => {
             };
         })();
     `, true);
+    console.log(`Electron smoke phase: capturePage ${JSON.stringify(canvasRect)}`);
     const image = await win.webContents.capturePage(canvasRect);
+    console.log('Electron smoke phase: analyzing capture');
     const size = image.getSize();
     const bitmap = image.toBitmap();
     const centerX0 = Math.floor(size.width * 0.25);
@@ -243,12 +261,21 @@ const createWindow = async () => {
     win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
         dialog.showErrorBox('4DGS Viewer failed to load', `${errorCode}: ${errorDescription}`);
     });
+    win.webContents.on('console-message', (event) => {
+        if (process.env.ELECTRON_SMOKE_TEST === '1') {
+            console.log(`Renderer console[${event.level}] ${event.sourceId}:${event.lineNumber} ${event.message}`);
+        }
+    });
+    win.webContents.on('render-process-gone', (_event, details) => {
+        console.error(`Renderer process gone: ${JSON.stringify(details)}`);
+    });
 
     if (process.env.ELECTRON_SMOKE_TEST === '1') {
+        const smokeTimeoutMs = getSmokeTestTimeoutMs();
         const smokeWatchdog = setTimeout(() => {
-            console.error('Electron smoke watchdog timed out');
+            console.error(`Electron smoke watchdog timed out after ${smokeTimeoutMs}ms`);
             app.exit(1);
-        }, 60000);
+        }, smokeTimeoutMs);
 
         win.webContents.once('did-finish-load', async () => {
             console.log(`Electron smoke loaded: ${win.webContents.getURL()}`);

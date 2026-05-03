@@ -1,7 +1,7 @@
 import { path, Quat, Vec3 } from 'playcanvas';
 
 import { collectFourDGSFrameSources, createFourDGSFrameUrlSources, parseFourDGSManifest, type FourDGSManifest } from './4dgs-manifest';
-import { createNative4DGSUrlSources, parseNative4DGSManifest, type Native4DGSManifest, type Native4DGSSources } from './4dgs-native';
+import { collectNative4DGSLocalSources, createNative4DGSUrlSources, parseNative4DGSManifest, type Native4DGSManifest, type Native4DGSSources } from './4dgs-native';
 import { buildFourDGSSession, parseFourDGSSession, sessionFilename, type FourDGSSession } from './4dgs-session';
 import { CreateDropHandler } from './drop-handler';
 import { ElementType } from './element';
@@ -21,7 +21,7 @@ type ExportType = 'ply' | 'splat' | 'sog' | 'viewer';
 type FileType = 'ply' | 'compressedPly' | 'splat' | 'sog' | 'htmlViewer' | 'packageViewer';
 
 type ActiveFourDGSPackage = {
-    manifest: FourDGSManifest;
+    manifest: FourDGSManifest | Native4DGSManifest;
     upAxis: ImportUpAxis;
 };
 
@@ -162,10 +162,6 @@ const isLcc = (filenames: string[]) => {
 const isManifestFilename = (filename: string) => {
     const normalized = filename.replace(/\\/g, '/').toLowerCase();
     return normalized === 'manifest.json' || normalized.endsWith('/manifest.json');
-};
-
-const normalizePackageFilename = (filename: string) => {
-    return filename.replace(/\\/g, '/').replace(/^\/+/, '');
 };
 
 type ImportFile = {
@@ -462,25 +458,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
             return createNative4DGSUrlSources(manifestFile.url, manifest);
         }
 
-        const manifestName = normalizePackageFilename(manifestFile.filename);
-        const manifestPrefix = manifestName.endsWith('manifest.json') ? manifestName.slice(0, -'manifest.json'.length) : '';
-        const resolveLocal = (relativeFilename: string) => {
-            const expected = normalizePackageFilename(`${manifestPrefix}${relativeFilename}`).toLowerCase();
-            const suffix = normalizePackageFilename(relativeFilename).toLowerCase();
-            const file = files.find((candidate) => {
-                const normalized = normalizePackageFilename(candidate.filename).toLowerCase();
-                return normalized === expected || normalized.endsWith(`/${suffix}`);
-            });
-            if (!file) {
-                throw new Error(`Native 4DGS package is missing ${relativeFilename}`);
-            }
-            return file;
-        };
-
-        return {
-            base: resolveLocal(manifest.baseFile),
-            motion: resolveLocal(manifest.motionFile)
-        };
+        return collectNative4DGSLocalSources(files, manifestFile, manifest);
     };
 
     // figure out what the set of files are (ply sequence, document, sog set, ply) and then import them
@@ -512,6 +490,10 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                         sources: collectNativeSources(files, manifestFile, manifest),
                         upAxis: packageUpAxis
                     });
+                    activeFourDGSPackage = {
+                        manifest,
+                        upAxis: packageUpAxis
+                    };
                     return result;
                 }
 
@@ -722,7 +704,11 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
             } else {
                 events.fire('timeline.setFrame', session.frame);
             }
-            await events.invoke('plysequence.setFrameAsync', session.frame);
+            if (events.invoke('native4dgs.active')) {
+                events.fire('timeline.setFrame', session.frame);
+            } else {
+                await events.invoke('plysequence.setFrameAsync', session.frame);
+            }
             if (session.camera) {
                 scene.camera.docDeserialize(session.camera);
                 scene.forceRender = true;

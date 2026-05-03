@@ -1,6 +1,6 @@
 {
     "name": "supersplat",
-    "version": "2.24.5-4dgs.10",
+    "version": "2.24.5-4dgs.11",
     "author": "PlayCanvas<support@playcanvas.com>",
     "homepage": "https://playcanvas.com/supersplat/editor",
     "description": "3D Gaussian Splat Editor",
@@ -14,7 +14,7 @@
     "license": "MIT",
     "main": "electron/main.cjs",
     "scripts": {
-        "build": "rollup -c",
+        "build": "cross-env NODE_OPTIONS=--max-old-space-size=8192 rollup -c",
         "watch": "rollup -c -w",
         "serve": "serve dist -C",
         "develop": "cross-env BUILD_TYPE=debug concurrently --kill-others \"npm run watch\" \"npm run serve\"",
@@ -25,8 +25,10 @@
         "lint": "eslint src",
         "test:4dgs": "node scripts/test-4dgs-manifest.mjs",
         "test:4dgs-native": "node scripts/test-4dgs-native.mjs",
+        "test:4dgs-native-exporter": "python scripts/test-export-hust4dgs-native.py",
         "test:orientation": "node scripts/test-import-orientation.mjs",
         "test:4dgs-session": "node scripts/test-4dgs-session.mjs",
+        "test:4dgs-eval": "python scripts/test-evaluate-4dgs-images.py",
         "test:ply-sequence-cache": "node scripts/test-ply-sequence-cache.mjs",
         "test:ply-sequence-clip-runtime": "node scripts/test-ply-sequence-clip-runtime.mjs",
         "test:ply-sequence-runtime": "node scripts/test-ply-sequence-runtime.mjs",

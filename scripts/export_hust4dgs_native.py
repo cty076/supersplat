@@ -46,6 +46,16 @@ CHANNEL_SIZES = {
     "rotation": 4,
 }
 
+MOTION_ENCODINGS = {"float32-le", "float16-le"}
+
+
+def encode_motion_array(motion: np.ndarray, encoding: str) -> np.ndarray:
+    if encoding == "float32-le":
+        return motion.astype("<f4", copy=False)
+    if encoding == "float16-le":
+        return motion.astype("<f2", copy=False)
+    raise ValueError(f"Unsupported motion encoding: {encoding}")
+
 
 @torch.no_grad()
 def sample_motion(gaussians, times: torch.Tensor, batch_size: int, channels: list[str]) -> np.ndarray:
@@ -97,6 +107,7 @@ def main() -> None:
     parser.add_argument("--scene-name", type=str, default=None, help="Optional scene name. Defaults to model directory name.")
     parser.add_argument("--batch-size", type=int, default=65536, help="Point batch size for deformation sampling.")
     parser.add_argument("--channels", type=str, default="xyz,scale,rotation", help="Comma-separated motion channels. Supported: xyz,scale,rotation.")
+    parser.add_argument("--motion-encoding", type=str, default="float32-le", choices=sorted(MOTION_ENCODINGS), help="Motion binary encoding.")
     args = parser.parse_args()
 
     if args.keyframes < 2:
@@ -137,7 +148,7 @@ def main() -> None:
 
     output.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(point_cloud, output / "base.ply")
-    motion.astype("<f4", copy=False).tofile(output / "motion.bin")
+    encode_motion_array(motion, args.motion_encoding).tofile(output / "motion.bin")
 
     manifest = {
         "format": "4dgs-native-trajectory",
@@ -152,7 +163,7 @@ def main() -> None:
         "baseFile": "base.ply",
         "motionFile": "motion.bin",
         "motion": {
-            "encoding": "float32-le",
+            "encoding": args.motion_encoding,
             "layout": "keyframes-points-xyz" if channels == ["xyz"] else "keyframes-points-channels",
             "channels": channels,
         },

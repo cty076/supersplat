@@ -21,6 +21,10 @@ const mod = await import(pathToFileURL(`${process.cwd()}/${outDir}/4dgs-native.j
 const {
     parseNative4DGSManifest,
     createNative4DGSUrlSources,
+    collectNative4DGSLocalSources,
+    decodeNativeMotionBuffer,
+    formatNative4DGSMotionSummary,
+    getNativeMotionByteLength,
     getNativeMotionStride,
     sampleNativeMotion,
     sampleNativePositions
@@ -72,6 +76,37 @@ const {
 }
 
 {
+    const manifest = parseNative4DGSManifest({
+        format: '4dgs-native-trajectory',
+        version: 1,
+        sceneName: 'lego-half',
+        pointCount: 2,
+        keyframeCount: 2,
+        frameCount: 60,
+        frameRate: 30,
+        baseFile: 'base.ply',
+        motionFile: 'motion.bin',
+        motion: {
+            encoding: 'float16-le',
+            layout: 'keyframes-points-channels',
+            channels: ['xyz', 'scale', 'rotation']
+        }
+    });
+
+    assert.equal(getNativeMotionStride(manifest.motion.channels), 10);
+    assert.equal(getNativeMotionByteLength(manifest), 80);
+    assert.equal(formatNative4DGSMotionSummary(manifest), '2 pts | 2 keys | xyz+scale+rotation | FP16');
+}
+
+{
+    const halfValues = new Uint16Array([0x0000, 0x3c00, 0xc000, 0x3800]);
+    const decoded = decodeNativeMotionBuffer(halfValues.buffer, 'float16-le', 4);
+
+    assert.ok(decoded instanceof Float32Array);
+    assert.deepEqual(Array.from(decoded), [0, 1, -2, 0.5]);
+}
+
+{
     assert.throws(() => parseNative4DGSManifest({
         format: '4dgs-native-trajectory',
         version: 1,
@@ -98,6 +133,62 @@ const {
 
     assert.equal(sources.base.url, 'app://viewer/pkg/base.ply');
     assert.equal(sources.motion.url, 'app://viewer/pkg/motion.bin');
+}
+
+{
+    const manifest = parseNative4DGSManifest({
+        format: '4dgs-native-trajectory',
+        version: 1,
+        sceneName: 'folder-drag',
+        pointCount: 2,
+        keyframeCount: 2,
+        frameCount: 60,
+        frameRate: 30,
+        baseFile: 'base.ply',
+        motionFile: 'motion.bin',
+        motion: {
+            encoding: 'float32-le',
+            layout: 'keyframes-points-channels',
+            channels: ['xyz', 'scale', 'rotation']
+        }
+    });
+    const files = [
+        { filename: 'lego-native-full.4dgs-native/manifest.json', contents: new File(['{}'], 'manifest.json') },
+        { filename: 'lego-native-full.4dgs-native/base.ply', contents: new File(['ply'], 'base.ply') },
+        { filename: 'lego-native-full.4dgs-native/motion.bin', contents: new File(['bin'], 'motion.bin') }
+    ];
+
+    const sources = collectNative4DGSLocalSources(files, files[0], manifest);
+    assert.equal(sources.base.filename, 'lego-native-full.4dgs-native/base.ply');
+    assert.equal(sources.motion.filename, 'lego-native-full.4dgs-native/motion.bin');
+}
+
+{
+    const manifest = parseNative4DGSManifest({
+        format: '4dgs-native-trajectory',
+        version: 1,
+        sceneName: 'missing-motion',
+        pointCount: 2,
+        keyframeCount: 2,
+        frameCount: 60,
+        frameRate: 30,
+        baseFile: 'base.ply',
+        motionFile: 'motion.bin',
+        motion: {
+            encoding: 'float32-le',
+            layout: 'keyframes-points-channels',
+            channels: ['xyz', 'scale', 'rotation']
+        }
+    });
+    const files = [
+        { filename: 'manifest.json', contents: new File(['{}'], 'manifest.json') },
+        { filename: 'base.ply', contents: new File(['ply'], 'base.ply') }
+    ];
+
+    assert.throws(
+        () => collectNative4DGSLocalSources(files, files[0], manifest),
+        /missing motion\.bin/
+    );
 }
 
 {
