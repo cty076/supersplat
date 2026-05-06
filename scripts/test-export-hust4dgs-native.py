@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -32,5 +33,31 @@ except ValueError as error:
     assert "Unsupported motion encoding" in str(error)
 else:
     raise AssertionError("unsupported motion encoding should raise")
+
+motion_3d = np.arange(3 * 5 * 2, dtype=np.float32).reshape(3, 5, 2)
+indices = module.build_point_indices(5, 2)
+np.testing.assert_array_equal(indices, np.array([0, 2, 4], dtype=np.int64))
+np.testing.assert_array_equal(module.subsample_motion(motion_3d, indices), motion_3d[:, [0, 2, 4], :])
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    source = root / "source.ply"
+    target = root / "target.ply"
+    header = (
+        "ply\n"
+        "format binary_little_endian 1.0\n"
+        "element vertex 5\n"
+        "property float x\n"
+        "property float y\n"
+        "end_header\n"
+    ).encode("ascii")
+    rows = np.arange(10, dtype="<f4").reshape(5, 2)
+    source.write_bytes(header + rows.tobytes())
+
+    module.subsample_binary_little_endian_ply(source, target, indices)
+    output = target.read_bytes()
+    output_header, output_payload = output.split(b"end_header\n", 1)
+    assert b"element vertex 3" in output_header
+    np.testing.assert_array_equal(np.frombuffer(output_payload, dtype="<f4").reshape(3, 2), rows[[0, 2, 4]])
 
 print("HUST 4DGS native exporter encoding tests passed")

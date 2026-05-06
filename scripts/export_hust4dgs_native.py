@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from argparse import Namespace
 from pathlib import Path
@@ -57,6 +56,43 @@ def encode_motion_array(motion: np.ndarray, encoding: str) -> np.ndarray:
     raise ValueError(f"Unsupported motion encoding: {encoding}")
 
 
+def build_point_indices(point_count: int, point_stride: int) -> np.ndarray:
+    if point_stride < 1:
+        raise ValueError("--point-stride must be at least 1")
+    return np.arange(0, point_count, point_stride, dtype=np.int64)
+
+
+def subsample_motion(motion: np.ndarray, point_indices: np.ndarray) -> np.ndarray:
+    return motion[:, point_indices, :]
+
+
+def subsample_binary_little_endian_ply(source: Path, target: Path, point_indices: np.ndarray) -> None:
+    data = source.read_bytes()
+    marker = b"end_header\n"
+    header_end = data.index(marker) + len(marker)
+    header = data[:header_end].decode("ascii")
+    payload = data[header_end:]
+    lines = header.splitlines()
+
+    if "format binary_little_endian 1.0" not in lines:
+        raise ValueError("Only binary_little_endian PLY files are supported for point subsampling")
+
+    vertex_line_index = next((index for index, line in enumerate(lines) if line.startswith("element vertex ")), -1)
+    if vertex_line_index < 0:
+        raise ValueError("PLY header does not contain element vertex")
+    point_count = int(lines[vertex_line_index].split()[2])
+    if point_count <= 0:
+        raise ValueError("PLY vertex count must be positive")
+    if len(payload) % point_count != 0:
+        raise ValueError("PLY payload size is not divisible by vertex count")
+
+    row_size = len(payload) // point_count
+    rows = np.frombuffer(payload, dtype=np.uint8).reshape(point_count, row_size)
+    sampled_rows = rows[point_indices]
+    lines[vertex_line_index] = f"element vertex {len(point_indices)}"
+    target.write_bytes(("\n".join(lines) + "\n").encode("ascii") + sampled_rows.tobytes())
+
+
 @torch.no_grad()
 def sample_motion(gaussians, times: torch.Tensor, batch_size: int, channels: list[str]) -> np.ndarray:
     xyz = gaussians.get_xyz
@@ -108,6 +144,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=65536, help="Point batch size for deformation sampling.")
     parser.add_argument("--channels", type=str, default="xyz,scale,rotation", help="Comma-separated motion channels. Supported: xyz,scale,rotation.")
     parser.add_argument("--motion-encoding", type=str, default="float32-le", choices=sorted(MOTION_ENCODINGS), help="Motion binary encoding.")
+    parser.add_argument("--point-stride", type=int, default=1, help="Keep every Nth Gaussian point to reduce package size.")
     args = parser.parse_args()
 
     if args.keyframes < 2:
@@ -145,9 +182,15 @@ def main() -> None:
 
     times = torch.linspace(0.0, 1.0, args.keyframes, device=device).reshape(-1, 1)
     motion = sample_motion(gaussians, times, args.batch_size, channels)
+    point_indices = build_point_indices(motion.shape[1], args.point_stride)
+    if args.point_stride > 1:
+        motion = subsample_motion(motion, point_indices)
 
     output.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(point_cloud, output / "base.ply")
+    if args.point_stride > 1:
+        subsample_binary_little_endian_ply(point_cloud, output / "base.ply", point_indices)
+    else:
+        (output / "base.ply").write_bytes(point_cloud.read_bytes())
     encode_motion_array(motion, args.motion_encoding).tofile(output / "motion.bin")
 
     manifest = {
