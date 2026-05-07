@@ -1,113 +1,112 @@
-# 4DGS Compression Benchmark Design
+# 4DGS 压缩基准设计
 
-## Goal
+## 目标
 
-Build a local benchmark suite for comparing 4D Gaussian Splatting packages across three formats:
+建立一个本地 benchmark 套件，用来比较 4D Gaussian Splatting 包在三种格式下的表现：
 
-1. Raw `PLY`
-2. Compressed `PLY`
-3. Native `4DGS` packages (`manifest.json`, `base.ply`, `motion.bin`)
+1. 原始 `PLY`
+2. 压缩 `PLY`
+3. 原生 `4DGS` 包（`manifest.json`、`base.ply`、`motion.bin`）
 
-The benchmark should produce repeatable, scene-level comparisons for file size, image quality, playback speed, and loading behavior.
+这个基准要能稳定输出场景级对比结果，覆盖文件大小、图像质量、播放速度和加载行为。
 
-## Non-Goals
+## 非目标
 
-- Training new 4DGS models
-- Rewriting the renderer itself
-- Adding new compression algorithms in the first pass
-- Benchmarking arbitrary external viewers
+- 训练新的 4DGS 模型
+- 重写渲染器本身
+- 第一版就加入新的压缩算法
+- 对任意外部查看器做基准测试
 
-## Proposed Structure
+## 方案结构
 
-### 1. Package Catalog
+### 1. 包目录
 
-Each benchmark target is described by a manifest entry with:
+每个 benchmark 目标用一个 manifest 条目描述，包含：
 
-- display name
-- format type
-- source path
-- scene name
-- frame range or keyframe metadata if available
-- notes for special handling
+- 显示名称
+- 格式类型
+- 源路径
+- 场景名
+- 帧范围或关键帧元数据（如果有）
+- 特殊处理说明
 
-This keeps the benchmark runner format-agnostic.
+这样可以让 benchmark runner 保持格式无关。
 
-### 2. Render Adapter Layer
+### 2. 渲染适配层
 
-A small adapter layer loads each package type through the existing runtime path:
+增加一层小型适配器，通过现有运行时路径加载不同包类型：
 
-- raw `PLY` -> current viewer path
-- compressed `PLY` -> current viewer path
-- native `4DGS` -> native runtime path
+- 原始 `PLY` -> 现有 viewer 路径
+- 压缩 `PLY` -> 现有 viewer 路径
+- 原生 `4DGS` -> 原生 runtime 路径
 
-All adapters must emit the same reference frame sequence for the same scene and camera path.
+所有适配器都必须在同一场景和相机轨迹下输出同一组参考帧序列。
 
-### 3. Metrics Collector
+### 3. 指标采集器
 
-Collect the following per package:
+每个包采集以下指标：
 
-- package size on disk
-- load time
-- first-frame render time
-- average FPS during playback
-- frame-by-frame PSNR
-- frame-by-frame SSIM
-- optional visual failure flags such as missing frames or visible flicker
+- 磁盘占用
+- 加载时间
+- 首帧渲染时间
+- 播放期间平均 FPS
+- 每帧 PSNR
+- 每帧 SSIM
+- 可选的可视化失败标记，例如缺帧或明显闪烁
 
-### 4. Result Export
+### 4. 结果导出
 
-Export benchmark results as:
+导出结果为：
 
-- human-readable markdown summary
-- machine-readable JSON
-- optional CSV for plotting
+- 人类可读的 markdown 汇总
+- 机器可读的 JSON
+- 可选 CSV，方便后续画图
 
-## Benchmark Flow
+## Benchmark 流程
 
-1. Select a scene and reference frame set.
-2. Register all package variants for that scene.
-3. Render each package through the same camera path and playback schedule.
-4. Compare rendered frames to the reference frames.
-5. Record timing and quality metrics.
-6. Emit a combined report for all variants.
+1. 选择一个场景和参考帧集。
+2. 为这个场景登记所有包版本。
+3. 用相同的相机轨迹和播放节奏渲染每个包。
+4. 把渲染结果和参考帧对比。
+5. 记录时间和质量指标。
+6. 输出所有版本的综合报告。
 
-## Comparison Rules
+## 对比规则
 
-- Use identical frame names for reference and rendered outputs.
-- Use the same resolution for all variants.
-- Use the same camera path and frame count per scene.
-- If a package cannot render a frame, record the failure explicitly instead of skipping it silently.
+- 参考帧和渲染帧必须使用相同文件名。
+- 所有版本必须使用同一分辨率。
+- 所有版本必须使用同一相机轨迹和相同帧数。
+- 如果某个包无法渲染某帧，要明确记录失败，不允许静默跳过。
 
-## Implementation Phases
+## 实现阶段
 
-### Phase 1: Core Harness
+### 第一阶段：核心框架
 
-- Package manifest format
+- 包清单格式
 - Runner CLI
-- Metric aggregation
-- JSON and markdown output
+- 指标聚合
+- JSON 和 markdown 输出
 
-### Phase 2: Scene Adapters
+### 第二阶段：场景适配器
 
-- Adapter for raw `PLY`
-- Adapter for compressed `PLY`
-- Adapter for native `4DGS`
+- 原始 `PLY` 适配器
+- 压缩 `PLY` 适配器
+- 原生 `4DGS` 适配器
 
-### Phase 3: Convenience Tools
+### 第三阶段：便利工具
 
-- Preset benchmark sets
-- Batch run script
-- Result comparison table
+- 预设 benchmark 集合
+- 批量运行脚本
+- 结果对比表
 
-## Risks
+## 风险
 
-- Different package types may not share identical camera compatibility.
-- Some quality differences will come from format limitations rather than compression quality alone.
-- FPS numbers can vary with hardware and should be treated as local machine measurements, not universal constants.
+- 不同包类型可能不共享完全一致的相机兼容性。
+- 一部分质量差异可能来自格式本身限制，而不只是压缩质量。
+- FPS 数字会受本机硬件影响，只能视为本地测量值，不能当通用常量。
 
-## Success Criteria
+## 成功标准
 
-- One command can benchmark all supported package types for a scene.
-- The output clearly shows the trade-off between size and quality.
-- Results are stable enough to compare different compression settings over time.
-
+- 一条命令可以对一个场景的所有支持格式做 benchmark。
+- 输出能清楚展示体积和质量之间的权衡。
+- 结果足够稳定，能用于长期比较不同压缩设置。
