@@ -9,3 +9,6 @@ dist
 .npm-cache
 serve-4dgs*.log
 desktop-dist
+benchmarks/results
+.tmp-benchmark.json
+.tmp-4dgs-benchmark-tests

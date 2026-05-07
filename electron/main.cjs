@@ -5,6 +5,7 @@ const { pathToFileURL } = require('node:url');
 
 const APP_ORIGIN = 'app://4dgs-viewer/';
 const LOCAL_PACKAGE_PREFIX = '__local_4dgs_package__';
+const BENCHMARK_REFERENCE_PREFIX = '__benchmark_reference__';
 
 app.commandLine.appendSwitch('force_high_performance_gpu');
 app.commandLine.appendSwitch('use-angle', 'd3d11');
@@ -35,9 +36,40 @@ const getSmokeTestTimeoutMs = () => {
     return Number.isFinite(value) && value >= 30000 ? value : 180000;
 };
 
+const getBenchmarkSpec = () => {
+    const value = process.env.ELECTRON_BENCHMARK_SPEC;
+    return value ? JSON.parse(value) : null;
+};
+
+const getBenchmarkReferenceRoot = () => {
+    const value = process.env.ELECTRON_BENCHMARK_REFERENCE_ROOT;
+    return value ? path.resolve(value) : null;
+};
+
+const getBenchmarkOutputPath = () => {
+    const value = process.env.ELECTRON_BENCHMARK_OUTPUT;
+    return value ? path.resolve(value) : null;
+};
+
+const getBenchmarkLoadUrl = () => {
+    const value = process.env.ELECTRON_BENCHMARK_LOAD_URL;
+    return value ?? null;
+};
+
+const getBenchmarkLoadFilename = () => {
+    const value = process.env.ELECTRON_BENCHMARK_LOAD_FILENAME;
+    return value ?? null;
+};
+
+const getBenchmarkUpAxis = () => {
+    const value = process.env.ELECTRON_BENCHMARK_UP_AXIS;
+    return value === 'z' ? 'z' : 'y';
+};
+
 const registerAppProtocol = () => {
     const distDir = getDistDir();
     const packageRoot = getSmokePackageRoot();
+    const benchmarkReferenceRoot = getBenchmarkReferenceRoot();
 
     protocol.handle('app', async (request) => {
         const url = new URL(request.url);
@@ -55,6 +87,18 @@ const registerAppProtocol = () => {
             return net.fetch(pathToFileURL(filePath).toString());
         }
 
+        if (benchmarkReferenceRoot && (relativePath === BENCHMARK_REFERENCE_PREFIX || relativePath.startsWith(`${BENCHMARK_REFERENCE_PREFIX}/`))) {
+            const referenceRelativePath = relativePath.slice(BENCHMARK_REFERENCE_PREFIX.length).replace(/^\/+/, '') || 'index.html';
+            const filePath = path.resolve(benchmarkReferenceRoot, referenceRelativePath);
+            const insideReference = filePath === benchmarkReferenceRoot || filePath.startsWith(`${benchmarkReferenceRoot}${path.sep}`);
+
+            if (!insideReference || !fs.existsSync(filePath)) {
+                return new Response('Not found', { status: 404 });
+            }
+
+            return net.fetch(pathToFileURL(filePath).toString());
+        }
+
         const filePath = path.resolve(distDir, relativePath);
         const insideDist = filePath === distDir || filePath.startsWith(`${distDir}${path.sep}`);
 
@@ -66,11 +110,187 @@ const registerAppProtocol = () => {
     });
 };
 
+const runFourDGSBenchmark = async (win) => {
+    const spec = getBenchmarkSpec();
+    if (!spec) {
+        return null;
+    }
+
+    console.log('Electron benchmark phase: renderer checks starting');
+    const result = await win.webContents.executeJavaScript(`
+        (async () => {
+            const spec = ${JSON.stringify(spec)};
+            const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const waitForEvents = async () => {
+                for (let i = 0; i < 300; i++) {
+                    if (window.scene?.events) {
+                        return window.scene.events;
+                    }
+                    await delay(50);
+                }
+                throw new Error('Scene events were not exposed');
+            };
+
+            const benchmarkStart = performance.now();
+            const events = await waitForEvents();
+            const width = spec.width;
+            const height = spec.height;
+            const packageMode = spec.packageMode ?? 'native';
+            const frames = Array.isArray(spec.frames) ? spec.frames : [];
+            if (!frames.length) {
+                throw new Error('Benchmark spec contains no frames');
+            }
+            const loadMs = performance.now() - benchmarkStart;
+
+            const rgbaToRgb = (rgba) => {
+                const rgb = new Uint8Array((rgba.length / 4) * 3);
+                for (let i = 0, j = 0; i < rgba.length; i += 4, j += 3) {
+                    rgb[j] = rgba[i];
+                    rgb[j + 1] = rgba[i + 1];
+                    rgb[j + 2] = rgba[i + 2];
+                }
+                return rgb;
+            };
+
+            const computeMetrics = (reference, rendered) => {
+                if (reference.length !== rendered.length) {
+                    throw new Error(\`Reference/rendered length mismatch: \${reference.length} vs \${rendered.length}\`);
+                }
+
+                const length = reference.length;
+                let referenceSum = 0;
+                let renderedSum = 0;
+                for (let i = 0; i < length; i++) {
+                    referenceSum += reference[i];
+                    renderedSum += rendered[i];
+                }
+
+                const referenceMean = referenceSum / length;
+                const renderedMean = renderedSum / length;
+                let mse = 0;
+                let referenceVariance = 0;
+                let renderedVariance = 0;
+                let covariance = 0;
+                for (let i = 0; i < length; i++) {
+                    const referenceDelta = reference[i] - referenceMean;
+                    const renderedDelta = rendered[i] - renderedMean;
+                    const diff = reference[i] - rendered[i];
+                    mse += diff * diff;
+                    referenceVariance += referenceDelta * referenceDelta;
+                    renderedVariance += renderedDelta * renderedDelta;
+                    covariance += referenceDelta * renderedDelta;
+                }
+
+                mse /= length;
+                referenceVariance /= length;
+                renderedVariance /= length;
+                covariance /= length;
+
+                const psnr = mse === 0 ? Infinity : 20 * Math.log10(255 / Math.sqrt(mse));
+                const c1 = (0.01 * 255) ** 2;
+                const c2 = (0.03 * 255) ** 2;
+                const ssim = ((2 * referenceMean * renderedMean + c1) * (2 * covariance + c2)) /
+                    ((referenceMean ** 2 + renderedMean ** 2 + c1) * (referenceVariance + renderedVariance + c2));
+
+                return { mse, psnr, ssim };
+            };
+
+            const loadReferencePixels = async (referenceFile) => {
+                const referenceUrl = new URL(referenceFile, ${JSON.stringify(spec.referenceRootUrl)}).toString();
+                const response = await fetch(referenceUrl);
+                if (!response.ok) {
+                    throw new Error(\`Failed to load reference frame \${referenceFile}: \${response.status}\`);
+                }
+
+                const bitmap = await createImageBitmap(await response.blob());
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const context = canvas.getContext('2d', { willReadFrequently: true });
+                context.clearRect(0, 0, width, height);
+                context.drawImage(bitmap, 0, 0, width, height);
+                const pixels = context.getImageData(0, 0, width, height).data;
+                if (bitmap.close) {
+                    bitmap.close();
+                }
+                return rgbaToRgb(new Uint8Array(pixels.buffer.slice(0)));
+            };
+
+            const captureFrame = async (frameEntry) => {
+                const renderStart = performance.now();
+                if (packageMode === 'native') {
+                    events.fire('timeline.setFrame', frameEntry.frame);
+                } else if (packageMode === 'sequence') {
+                    await events.invoke('plysequence.setFrameAsync', frameEntry.frame);
+                } else {
+                    events.fire('timeline.setFrame', frameEntry.frame);
+                }
+
+                const rendered = new Uint8Array(await events.invoke('render.offscreen', width, height));
+                const renderMs = performance.now() - renderStart;
+                const reference = await loadReferencePixels(frameEntry.referenceFile);
+                const metrics = computeMetrics(reference, rgbaToRgb(rendered));
+                return {
+                    frame: frameEntry.frame,
+                    referenceFile: frameEntry.referenceFile,
+                    renderMs,
+                    mse: metrics.mse,
+                    psnr: metrics.psnr,
+                    ssim: metrics.ssim
+                };
+            };
+
+            const frameReports = [];
+            for (const frameEntry of frames) {
+                frameReports.push(await captureFrame(frameEntry));
+            }
+
+            const firstFrameMs = frameReports[0].renderMs;
+            const totalRenderMs = frameReports.reduce((sum, frame) => sum + frame.renderMs, 0);
+            const finitePsnr = frameReports.filter((frame) => Number.isFinite(frame.psnr)).map((frame) => frame.psnr);
+            const averagePsnr = finitePsnr.length ? finitePsnr.reduce((sum, value) => sum + value, 0) / finitePsnr.length : Infinity;
+            const averageSsim = frameReports.reduce((sum, frame) => sum + frame.ssim, 0) / frameReports.length;
+            const averageMse = frameReports.reduce((sum, frame) => sum + frame.mse, 0) / frameReports.length;
+
+            return {
+                sceneName: spec.sceneName,
+                packageName: spec.packageName,
+                packageMode,
+                frameCount: frameReports.length,
+                loadMs,
+                firstFrameMs,
+                totalRenderMs,
+                averageFps: totalRenderMs > 0 ? (frameReports.length * 1000) / totalRenderMs : 0,
+                averageMse,
+                averagePsnr,
+                averageSsim,
+                frames: frameReports
+            };
+        })();
+    `, true);
+    console.log(`Electron benchmark phase: renderer checks result ${JSON.stringify(result)}`);
+
+    const outputPath = getBenchmarkOutputPath();
+    if (outputPath) {
+        fs.writeFileSync(outputPath, JSON.stringify(result, null, 2));
+    }
+
+    return result;
+};
+
 const createAppUrl = () => {
     const url = new URL(APP_ORIGIN);
     url.searchParams.set('lng', 'zh-CN');
 
-    if (getSmokePackageRoot()) {
+    const benchmarkLoadUrl = getBenchmarkLoadUrl();
+    if (benchmarkLoadUrl) {
+        url.searchParams.set('load', benchmarkLoadUrl);
+        const benchmarkLoadFilename = getBenchmarkLoadFilename();
+        if (benchmarkLoadFilename) {
+            url.searchParams.set('filename', benchmarkLoadFilename);
+        }
+        url.searchParams.set('upAxis', getBenchmarkUpAxis());
+    } else if (getSmokePackageRoot()) {
         url.searchParams.set('load', `${APP_ORIGIN}${LOCAL_PACKAGE_PREFIX}/manifest.json`);
         url.searchParams.set('filename', 'manifest.json');
         url.searchParams.set('upAxis', 'y');
@@ -283,11 +503,24 @@ const createWindow = async () => {
                 if (getSmokePackageRoot()) {
                     await runFourDGSSmokeTest(win);
                 }
+                if (process.env.ELECTRON_BENCHMARK_SPEC) {
+                    await runFourDGSBenchmark(win);
+                }
                 clearTimeout(smokeWatchdog);
                 setTimeout(() => app.exit(0), 500);
             } catch (error) {
                 clearTimeout(smokeWatchdog);
                 console.error('Electron smoke failed:', error);
+                app.exit(1);
+            }
+        });
+    } else if (process.env.ELECTRON_BENCHMARK_SPEC) {
+        win.webContents.once('did-finish-load', async () => {
+            try {
+                await runFourDGSBenchmark(win);
+                setTimeout(() => app.exit(0), 500);
+            } catch (error) {
+                console.error('Electron benchmark failed:', error);
                 app.exit(1);
             }
         });

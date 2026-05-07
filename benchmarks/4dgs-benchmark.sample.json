@@ -1,0 +1,48 @@
+{
+  "sceneName": "lego",
+  "referenceRoot": "D:/research/4DGS/baselines/supersplat/.worktrees/4dgs-viewer/benchmarks/lego-reference",
+  "packages": [
+    {
+      "name": "lego-raw-ply",
+      "format": "ply",
+      "packageRoot": "D:/research/4DGS/outputs/experiments/2026-04-24-baseline-dnerf-hellwarrior/dnerf_full/lego/point_cloud/iteration_20000/point_cloud.ply",
+      "packageMode": "single",
+      "width": 1280,
+      "height": 720,
+      "frames": [
+        {
+          "frame": 0,
+          "referenceFile": "frame_000.png"
+        }
+      ]
+    },
+    {
+      "name": "lego-compressed-ply",
+      "format": "compressed-ply",
+      "packageRoot": "D:/research/4DGS/outputs/viewer/lego-point_cloud.compressed.ply",
+      "packageMode": "single",
+      "width": 1280,
+      "height": 720,
+      "frames": [
+        {
+          "frame": 0,
+          "referenceFile": "frame_000.png"
+        }
+      ]
+    },
+    {
+      "name": "lego-native-half",
+      "format": "4dgs-native",
+      "packageRoot": "D:/research/4DGS/outputs/viewer/lego-native-half.4dgs-native",
+      "packageMode": "native",
+      "width": 1280,
+      "height": 720,
+      "frames": [
+        {
+          "frame": 0,
+          "referenceFile": "frame_000.png"
+        }
+      ]
+    }
+  ]
+}
