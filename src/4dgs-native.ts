@@ -389,6 +389,9 @@ const inflateBytes = async (buffer: ArrayBuffer, codec: 'raw' | 'zlib' = 'raw') 
 };
 
 const createDeltaReader = (payload: Uint8Array, record: Native4DGSPropertyRecord) => {
+    if (record.payloadOffset + record.payloadBytes > payload.byteLength) {
+        throw new Error(`Native 4DGS property-delta payload is too short for ${record.name}`);
+    }
     if (record.dtype === 'int8') {
         return (index: number) => {
             const value = payload[record.payloadOffset + index];
@@ -408,7 +411,7 @@ const decodePropertyDeltaMotionBuffer = async (buffer: ArrayBuffer, manifest: Na
     const headerText = new TextDecoder().decode(data.slice(4, 4 + headerLength));
     const header = JSON.parse(headerText) as { records: Native4DGSPropertyRecord[] };
     const records = new Map(header.records.map(record => [record.name, record]));
-    const payload = data.slice(4 + headerLength);
+    const payload = data.subarray(4 + headerLength);
     const channels = manifest.motion.channels;
     const stride = getNativeMotionStride(channels);
     const result = new Float32Array(getNativeMotionFloatCount(manifest));

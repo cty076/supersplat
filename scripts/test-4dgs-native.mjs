@@ -92,6 +92,12 @@ assert.equal(mod.isNative4DGSFormat('4dgs-baked-sequence'), false);
         zlibManifest
     );
     assert.deepEqual(Array.from(zlibDecoded), Array.from(decoded));
+
+    const truncated = motion.slice(0, motion.length - 1);
+    await assert.rejects(
+        () => mod.decodeNativeMotionBufferAsync(truncated.buffer, manifest),
+        /payload is too short/
+    );
 }
 
 {
