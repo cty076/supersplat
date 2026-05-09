@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { deflateSync } from 'node:zlib';
 
 const outDir = '.tmp-4dgs-native-tests';
 rmSync(outDir, { recursive: true, force: true });
@@ -29,6 +30,69 @@ const {
     sampleNativeMotion,
     sampleNativePositions
 } = mod;
+
+assert.equal(mod.isNative4DGSFormat('4dgs-native-trajectory'), true);
+assert.equal(mod.isNative4DGSFormat('4dgs-native-motion'), true);
+assert.equal(mod.isNative4DGSFormat('4dgs-baked-sequence'), false);
+
+{
+    const manifest = parseNative4DGSManifest({
+        format: '4dgs-native-motion',
+        version: 1,
+        sceneName: 'property-delta',
+        frameCount: 2,
+        frameRate: 30,
+        vertexCount: 2,
+        propertyCount: 6,
+        base: 'base.ply',
+        motion: 'motion.bin',
+        motionCodec: 'raw',
+        motionFormat: 'property-delta-v3',
+        propertyRecords: [
+            { name: 'x', dtype: 'int16', mode: 'delta', index: 0, scale: [0.1], payloadOffset: 0, payloadBytes: 4 },
+            { name: 'y', dtype: 'int8', mode: 'delta', index: 1, scale: [0.2], payloadOffset: 4, payloadBytes: 2 },
+            { name: 'z', dtype: 'int16', mode: 'delta', index: 2, scale: [0.3], payloadOffset: 6, payloadBytes: 4 },
+            { name: 'scale_0', dtype: 'int8', mode: 'delta', index: 3, scale: [0.01], payloadOffset: 10, payloadBytes: 2 },
+            { name: 'scale_1', dtype: 'int8', mode: 'constant', index: 4, scale: [1], payloadOffset: 12, payloadBytes: 0 },
+            { name: 'rot_0', dtype: 'int8', mode: 'delta', index: 5, scale: [0.05], payloadOffset: 12, payloadBytes: 2 }
+        ]
+    });
+
+    assert.equal(manifest.format, '4dgs-native-motion');
+    assert.equal(manifest.motion.encoding, 'property-delta-v3');
+    assert.equal(manifest.pointCount, 2);
+    assert.equal(manifest.keyframeCount, 2);
+
+    const payload = new Uint8Array(14);
+    new Int16Array(payload.buffer, 0, 2).set([1, 2]);
+    new Int8Array(payload.buffer, 4, 2).set([3, 4]);
+    new Int16Array(payload.buffer, 6, 2).set([5, 6]);
+    new Int8Array(payload.buffer, 10, 2).set([7, 8]);
+    new Int8Array(payload.buffer, 12, 2).set([9, 10]);
+    const header = new TextEncoder().encode(JSON.stringify({ records: manifest.propertyRecords }));
+    const motion = new Uint8Array(4 + header.length + payload.length);
+    new DataView(motion.buffer).setUint32(0, header.length, true);
+    motion.set(header, 4);
+    motion.set(payload, 4 + header.length);
+    const decoded = await mod.decodeNativeMotionBufferAsync(motion.buffer, manifest);
+
+    assert.deepEqual(Array.from(decoded.slice(0, 20)), new Array(20).fill(0));
+    assert.deepEqual(
+        Array.from(decoded.slice(20, 40)).map(v => Number(v.toFixed(3))),
+        [
+            0.1, 0.6, 1.5, 0.07, 0, 0, 0.45, 0, 0, 0,
+            0.2, 0.8, 1.8, 0.08, 0, 0, 0.5, 0, 0, 0
+        ]
+    );
+
+    const zlibManifest = { ...manifest, motionCodec: 'zlib' };
+    const deflated = deflateSync(motion);
+    const zlibDecoded = await mod.decodeNativeMotionBufferAsync(
+        deflated.buffer.slice(deflated.byteOffset, deflated.byteOffset + deflated.byteLength),
+        zlibManifest
+    );
+    assert.deepEqual(Array.from(zlibDecoded), Array.from(decoded));
+}
 
 {
     const manifest = parseNative4DGSManifest({

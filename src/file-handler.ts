@@ -1,7 +1,7 @@
 import { path, Quat, Vec3 } from 'playcanvas';
 
 import { collectFourDGSFrameSources, createFourDGSFrameUrlSources, parseFourDGSManifest, type FourDGSManifest } from './4dgs-manifest';
-import { collectNative4DGSLocalSources, createNative4DGSUrlSources, parseNative4DGSManifest, type Native4DGSManifest, type Native4DGSSources } from './4dgs-native';
+import { collectNative4DGSLocalSources, createNative4DGSUrlSources, isNative4DGSFormat, parseNative4DGSManifest, type Native4DGSManifest, type Native4DGSSources } from './4dgs-native';
 import { buildFourDGSSession, parseFourDGSSession, sessionFilename, type FourDGSSession } from './4dgs-session';
 import { CreateDropHandler } from './drop-handler';
 import { ElementType } from './element';
@@ -481,7 +481,7 @@ const initFileHandler = (scene: Scene, events: Events, dropTarget: HTMLElement) 
                 const manifestData = manifestFile.contents ?
                     await new Response(manifestFile.contents).json() :
                     await (await fetch(manifestFile.url)).json();
-                if (manifestData?.format === '4dgs-native-trajectory') {
+                if (isNative4DGSFormat(manifestData?.format)) {
                     const manifest = parseNative4DGSManifest(manifestData) as Native4DGSManifest;
                     const packageUpAxis = await getUpAxis();
                     events.fire('timeline.setPlaying', false);

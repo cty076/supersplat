@@ -1,9 +1,20 @@
-type Native4DGSMotionEncoding = 'float32-le' | 'float16-le';
+type Native4DGSMotionEncoding = 'float32-le' | 'float16-le' | 'property-delta-v3';
 type Native4DGSMotionLayout = 'keyframes-points-xyz' | 'keyframes-points-channels';
 type Native4DGSMotionChannel = 'xyz' | 'scale' | 'rotation';
+type Native4DGSFormat = '4dgs-native-trajectory' | '4dgs-native-motion';
+
+type Native4DGSPropertyRecord = {
+    name: string;
+    dtype: 'int8' | 'int16';
+    mode: 'constant' | 'delta';
+    index: number;
+    scale: number[];
+    payloadOffset: number;
+    payloadBytes: number;
+};
 
 type Native4DGSManifest = {
-    format: '4dgs-native-trajectory';
+    format: Native4DGSFormat;
     version: 1;
     sceneName: string;
     pointCount: number;
@@ -19,6 +30,9 @@ type Native4DGSManifest = {
         layout: Native4DGSMotionLayout;
         channels: Native4DGSMotionChannel[];
     };
+    propertyRecords?: Native4DGSPropertyRecord[];
+    motionCodec?: 'raw' | 'zlib';
+    motionFormat?: 'property-delta-v3';
     source?: {
         method?: string;
         iteration?: number;
@@ -57,16 +71,22 @@ const nativeMotionChannelSizes: Record<Native4DGSMotionChannel, number> = {
 
 const nativeMotionEncodingBytes: Record<Native4DGSMotionEncoding, number> = {
     'float32-le': 4,
-    'float16-le': 2
+    'float16-le': 2,
+    'property-delta-v3': 0
 };
 
 const nativeMotionEncodingLabels: Record<Native4DGSMotionEncoding, string> = {
     'float32-le': 'FP32',
-    'float16-le': 'FP16'
+    'float16-le': 'FP16',
+    'property-delta-v3': 'PDELTA'
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
     return typeof value === 'object' && value !== null;
+};
+
+const isNative4DGSFormat = (value: unknown): value is Native4DGSFormat => {
+    return value === '4dgs-native-trajectory' || value === '4dgs-native-motion';
 };
 
 const requireString = (data: Record<string, unknown>, key: string) => {
@@ -152,9 +172,87 @@ const parseMotion = (value: unknown): Native4DGSManifest['motion'] => {
     };
 };
 
+const parsePropertyRecord = (value: unknown): Native4DGSPropertyRecord => {
+    if (!isRecord(value)) {
+        throw new Error('Invalid native 4DGS manifest: property record must be an object');
+    }
+    if (value.dtype !== 'int8' && value.dtype !== 'int16') {
+        throw new Error('Invalid native 4DGS manifest: property record dtype must be int8 or int16');
+    }
+    if (value.mode !== 'constant' && value.mode !== 'delta') {
+        throw new Error('Invalid native 4DGS manifest: property record mode must be constant or delta');
+    }
+    if (typeof value.name !== 'string' || value.name.length === 0) {
+        throw new Error('Invalid native 4DGS manifest: property record name must be a non-empty string');
+    }
+    if (!Number.isInteger(value.index) || (value.index as number) < 0) {
+        throw new Error('Invalid native 4DGS manifest: property record index must be a non-negative integer');
+    }
+    if (!Array.isArray(value.scale) || value.scale.length === 0 || value.scale.some(v => typeof v !== 'number' || !Number.isFinite(v))) {
+        throw new Error('Invalid native 4DGS manifest: property record scale must be numeric');
+    }
+    if (!Number.isInteger(value.payloadOffset) || (value.payloadOffset as number) < 0) {
+        throw new Error('Invalid native 4DGS manifest: property record payloadOffset must be a non-negative integer');
+    }
+    if (!Number.isInteger(value.payloadBytes) || (value.payloadBytes as number) < 0) {
+        throw new Error('Invalid native 4DGS manifest: property record payloadBytes must be a non-negative integer');
+    }
+
+    return {
+        name: value.name,
+        dtype: value.dtype,
+        mode: value.mode,
+        index: value.index as number,
+        scale: value.scale as number[],
+        payloadOffset: value.payloadOffset as number,
+        payloadBytes: value.payloadBytes as number
+    };
+};
+
+const parsePropertyDeltaManifest = (data: Record<string, unknown>): Native4DGSManifest => {
+    if (data.version !== 1) {
+        throw new Error('Unsupported native 4DGS package version');
+    }
+    if (data.motionCodec !== 'raw' && data.motionCodec !== 'zlib') {
+        throw new Error('Invalid native 4DGS manifest: motionCodec must be raw or zlib');
+    }
+    if (data.motionFormat !== 'property-delta-v3') {
+        throw new Error('Invalid native 4DGS manifest: motionFormat must be property-delta-v3');
+    }
+    if (!Array.isArray(data.propertyRecords) || data.propertyRecords.length === 0) {
+        throw new Error('Invalid native 4DGS manifest: propertyRecords must be a non-empty array');
+    }
+
+    return {
+        format: '4dgs-native-motion',
+        version: 1,
+        sceneName: requireString(data, 'sceneName'),
+        pointCount: requirePositiveInteger(data, 'vertexCount'),
+        keyframeCount: requirePositiveInteger(data, 'frameCount'),
+        frameCount: requirePositiveInteger(data, 'frameCount'),
+        frameRate: requirePositiveNumber(data, 'frameRate'),
+        baseFile: requireString(data, 'base'),
+        motionFile: requireString(data, 'motion'),
+        timeMin: optionalNumber(data, 'timeMin'),
+        timeMax: optionalNumber(data, 'timeMax'),
+        motion: {
+            encoding: 'property-delta-v3',
+            layout: 'keyframes-points-channels',
+            channels: ['xyz', 'scale', 'rotation']
+        },
+        propertyRecords: data.propertyRecords.map(parsePropertyRecord),
+        motionCodec: data.motionCodec,
+        motionFormat: 'property-delta-v3',
+        source: parseSource(data.source)
+    };
+};
+
 const parseNative4DGSManifest = (data: unknown): Native4DGSManifest => {
     if (!isRecord(data)) {
         throw new Error('Invalid native 4DGS manifest: expected object');
+    }
+    if (data.format === '4dgs-native-motion') {
+        return parsePropertyDeltaManifest(data);
     }
     if (data.format !== '4dgs-native-trajectory') {
         throw new Error('Unsupported native 4DGS package format');
@@ -234,6 +332,9 @@ const getNativeMotionFloatCount = (manifest: Native4DGSManifest) => {
 };
 
 const getNativeMotionByteLength = (manifest: Native4DGSManifest) => {
+    if (manifest.motion.encoding === 'property-delta-v3') {
+        return undefined;
+    }
     return getNativeMotionFloatCount(manifest) * nativeMotionEncodingBytes[manifest.motion.encoding];
 };
 
@@ -256,6 +357,9 @@ const halfFloatToNumber = (value: number) => {
 };
 
 const decodeNativeMotionBuffer = (buffer: ArrayBuffer, encoding: Native4DGSMotionEncoding, expectedFloats?: number) => {
+    if (encoding === 'property-delta-v3') {
+        throw new Error('Use decodeNativeMotionBufferAsync for property-delta-v3 motion');
+    }
     const byteLength = expectedFloats === undefined ? buffer.byteLength : expectedFloats * nativeMotionEncodingBytes[encoding];
     if (buffer.byteLength !== byteLength) {
         throw new Error(`Native 4DGS motion buffer has ${buffer.byteLength} bytes, expected ${byteLength}`);
@@ -271,6 +375,87 @@ const decodeNativeMotionBuffer = (buffer: ArrayBuffer, encoding: Native4DGSMotio
         result[i] = halfFloatToNumber(source[i]);
     }
     return result;
+};
+
+const inflateBytes = async (buffer: ArrayBuffer, codec: 'raw' | 'zlib' = 'raw') => {
+    if (codec === 'raw') {
+        return new Uint8Array(buffer);
+    }
+    if (!('DecompressionStream' in globalThis)) {
+        throw new Error('This runtime does not support zlib native 4DGS decompression');
+    }
+    const stream = new Blob([buffer]).stream().pipeThrough(new DecompressionStream('deflate'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+};
+
+const createDeltaReader = (payload: Uint8Array, record: Native4DGSPropertyRecord) => {
+    if (record.dtype === 'int8') {
+        return (index: number) => {
+            const value = payload[record.payloadOffset + index];
+            return value > 127 ? value - 256 : value;
+        };
+    }
+    const view = new DataView(payload.buffer, payload.byteOffset + record.payloadOffset, record.payloadBytes);
+    return (index: number) => view.getInt16(index * 2, true);
+};
+
+const decodePropertyDeltaMotionBuffer = async (buffer: ArrayBuffer, manifest: Native4DGSManifest) => {
+    if (!manifest.propertyRecords) {
+        throw new Error('Native 4DGS property-delta manifest is missing propertyRecords');
+    }
+    const data = await inflateBytes(buffer, manifest.motionCodec ?? 'raw');
+    const headerLength = new DataView(data.buffer, data.byteOffset, 4).getUint32(0, true);
+    const headerText = new TextDecoder().decode(data.slice(4, 4 + headerLength));
+    const header = JSON.parse(headerText) as { records: Native4DGSPropertyRecord[] };
+    const records = new Map(header.records.map(record => [record.name, record]));
+    const payload = data.slice(4 + headerLength);
+    const channels = manifest.motion.channels;
+    const stride = getNativeMotionStride(channels);
+    const result = new Float32Array(getNativeMotionFloatCount(manifest));
+
+    const writeProperty = (propertyName: string, channel: Native4DGSMotionChannel, component: number) => {
+        const channelOffset = getNativeMotionChannelOffset(channels, channel);
+        if (channelOffset < 0) {
+            return;
+        }
+        const record = records.get(propertyName);
+        if (!record || record.mode === 'constant') {
+            return;
+        }
+        const readDelta = createDeltaReader(payload, record);
+        for (let frame = 1; frame < manifest.keyframeCount; frame++) {
+            const srcFrame = frame - 1;
+            const frameBase = frame * manifest.pointCount * stride;
+            const payloadFrameBase = srcFrame * manifest.pointCount;
+            for (let point = 0; point < manifest.pointCount; point++) {
+                result[frameBase + point * stride + channelOffset + component] = readDelta(payloadFrameBase + point) * record.scale[0];
+            }
+        }
+    };
+
+    writeProperty('x', 'xyz', 0);
+    writeProperty('y', 'xyz', 1);
+    writeProperty('z', 'xyz', 2);
+    writeProperty('scale_0', 'scale', 0);
+    writeProperty('scale_1', 'scale', 1);
+    writeProperty('scale_2', 'scale', 2);
+    writeProperty('rot_0', 'rotation', 0);
+    writeProperty('rot_1', 'rotation', 1);
+    writeProperty('rot_2', 'rotation', 2);
+    writeProperty('rot_3', 'rotation', 3);
+
+    return result;
+};
+
+const decodeNativeMotionBufferAsync = async (buffer: ArrayBuffer, manifest: Native4DGSManifest) => {
+    if (manifest.motion.encoding === 'property-delta-v3') {
+        return decodePropertyDeltaMotionBuffer(buffer, manifest);
+    }
+    return decodeNativeMotionBuffer(buffer, manifest.motion.encoding, getNativeMotionFloatCount(manifest));
+};
+
+const isNativeMotionDeltaEncoded = (manifest: Native4DGSManifest) => {
+    return manifest.motion.encoding === 'property-delta-v3';
 };
 
 const getNativeMotionChannelOffset = (channels: Native4DGSMotionChannel[], target: Native4DGSMotionChannel) => {
@@ -319,19 +504,23 @@ export type {
     Native4DGSManifest,
     Native4DGSSources,
     Native4DGSFileSource,
-    Native4DGSMotionChannel
+    Native4DGSMotionChannel,
+    Native4DGSPropertyRecord
 };
 
 export {
     parseNative4DGSManifest,
+    isNative4DGSFormat,
     createNative4DGSUrlSources,
     collectNative4DGSLocalSources,
     decodeNativeMotionBuffer,
+    decodeNativeMotionBufferAsync,
     formatNative4DGSMotionSummary,
     getNativeMotionFloatCount,
     getNativeMotionByteLength,
     getNativeMotionStride,
     getNativeMotionChannelOffset,
+    isNativeMotionDeltaEncoded,
     sampleNativeMotion,
     sampleNativePositions
 };

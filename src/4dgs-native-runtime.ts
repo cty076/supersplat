@@ -1,6 +1,6 @@
 import { Asset } from 'playcanvas';
 
-import { decodeNativeMotionBuffer, getNativeMotionByteLength, getNativeMotionFloatCount, type Native4DGSFileSource, type Native4DGSManifest, type Native4DGSSources } from './4dgs-native';
+import { decodeNativeMotionBufferAsync, getNativeMotionByteLength, type Native4DGSFileSource, type Native4DGSManifest, type Native4DGSSources } from './4dgs-native';
 import { Native4DGSClip } from './4dgs-native-clip';
 import { Events } from './events';
 import { normalizeImportUpAxis, type ImportUpAxis } from './import-orientation';
@@ -44,7 +44,7 @@ const registerNative4DGSEvents = (events: Events, scene: Scene) => {
             events.fire('progressUpdate', { text: '读取运动数据', progress: 5 });
             const motionBuffer = await readSourceArrayBuffer(sources.motion);
             const expectedBytes = getNativeMotionByteLength(manifest);
-            if (motionBuffer.byteLength !== expectedBytes) {
+            if (expectedBytes !== undefined && motionBuffer.byteLength !== expectedBytes) {
                 throw new Error(`Native 4DGS motion buffer has ${motionBuffer.byteLength} bytes, expected ${expectedBytes}`);
             }
             console.info(`Native 4DGS motion loaded: ${motionBuffer.byteLength} bytes`);
@@ -57,7 +57,7 @@ const registerNative4DGSEvents = (events: Events, scene: Scene) => {
             console.info('Native 4DGS base asset loaded');
 
             events.fire('progressUpdate', { text: '解码运动轨迹', progress: 65 });
-            const keyframes = decodeNativeMotionBuffer(motionBuffer, manifest.motion.encoding, getNativeMotionFloatCount(manifest));
+            const keyframes = await decodeNativeMotionBufferAsync(motionBuffer, manifest);
             console.info(`Native 4DGS motion decoded: ${keyframes.length} floats`);
 
             events.fire('progressUpdate', { text: '创建实时播放对象', progress: 85 });
