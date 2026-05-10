@@ -1,6 +1,6 @@
 import { Asset } from 'playcanvas';
 
-import { decodeNativeMotionBufferAsync, getNativeMotionByteLength, type Native4DGSFileSource, type Native4DGSManifest, type Native4DGSSources } from './4dgs-native';
+import { decodeNativeMotionSourceAsync, getNativeMotionByteLength, type Native4DGSFileSource, type Native4DGSManifest, type Native4DGSSources } from './4dgs-native';
 import { Native4DGSClip } from './4dgs-native-clip';
 import { Events } from './events';
 import { normalizeImportUpAxis, type ImportUpAxis } from './import-orientation';
@@ -57,12 +57,12 @@ const registerNative4DGSEvents = (events: Events, scene: Scene) => {
             console.info('Native 4DGS base asset loaded');
 
             events.fire('progressUpdate', { text: '解码运动轨迹', progress: 65 });
-            const keyframes = await decodeNativeMotionBufferAsync(motionBuffer, manifest);
-            console.info(`Native 4DGS motion decoded: ${keyframes.length} floats`);
+            const motionSource = await decodeNativeMotionSourceAsync(motionBuffer, manifest);
+            console.info(`Native 4DGS motion decoded: ${motionSource.kind}`);
 
             events.fire('progressUpdate', { text: '创建实时播放对象', progress: 85 });
             destroyActiveClip();
-            const nextClip = new Native4DGSClip(asset, manifest, keyframes, normalizeImportUpAxis(options.upAxis));
+            const nextClip = new Native4DGSClip(asset, manifest, motionSource, normalizeImportUpAxis(options.upAxis));
             await scene.add(nextClip);
             nextClip.setTimelineFrame(0);
 

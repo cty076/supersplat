@@ -1,12 +1,12 @@
 import { Asset, BoundingBox, GSplatResource } from 'playcanvas';
 
-import { getNativeMotionChannelOffset, getNativeMotionStride, isNativeMotionDeltaEncoded, sampleNativeMotion, type Native4DGSManifest } from './4dgs-native';
+import { getNativeMotionChannelOffset, getNativeMotionStride, isNativeMotionDeltaEncoded, sampleNativeMotionSource, type Native4DGSManifest, type Native4DGSMotionSource } from './4dgs-native';
 import { getImportOrientation, type ImportUpAxis } from './import-orientation';
 import { Splat } from './splat';
 
 class Native4DGSClip extends Splat {
     readonly nativeManifest: Native4DGSManifest;
-    private keyframes: Float32Array;
+    private motionSource: Native4DGSMotionSource;
     private sampledMotion: Float32Array;
     private sampledCenters: Float32Array;
     private baseX: Float32Array;
@@ -26,11 +26,11 @@ class Native4DGSClip extends Splat {
     private currentTimelineFrame = -1;
     private sequenceBound = new BoundingBox();
 
-    constructor(asset: Asset, manifest: Native4DGSManifest, keyframes: Float32Array, upAxis: ImportUpAxis) {
+    constructor(asset: Asset, manifest: Native4DGSManifest, motionSource: Native4DGSMotionSource, upAxis: ImportUpAxis) {
         super(asset, getImportOrientation(manifest.baseFile, upAxis));
 
         this.nativeManifest = manifest;
-        this.keyframes = keyframes;
+        this.motionSource = motionSource;
         this.pointStride = getNativeMotionStride(manifest.motion.channels);
         this.scaleOffset = getNativeMotionChannelOffset(manifest.motion.channels, 'scale');
         this.rotationOffset = getNativeMotionChannelOffset(manifest.motion.channels, 'rotation');
@@ -57,8 +57,8 @@ class Native4DGSClip extends Splat {
         }
 
         const time = this.nativeManifest.frameCount <= 1 ? 0 : frame / (this.nativeManifest.frameCount - 1);
-        sampleNativeMotion({
-            keyframes: this.keyframes,
+        sampleNativeMotionSource({
+            source: this.motionSource,
             pointCount: this.nativeManifest.pointCount,
             keyframeCount: this.nativeManifest.keyframeCount,
             channels: this.nativeManifest.motion.channels,
@@ -129,7 +129,6 @@ class Native4DGSClip extends Splat {
     }
 
     private computeSequenceBound() {
-        const { keyframes } = this;
         const pointCount = this.nativeManifest.pointCount;
         const total = pointCount * this.nativeManifest.keyframeCount;
 
@@ -144,18 +143,27 @@ class Native4DGSClip extends Splat {
         let maxY = -Infinity;
         let maxZ = -Infinity;
 
-        for (let i = 0; i < total; i++) {
-            const offset = i * this.pointStride;
-            const point = i % pointCount;
-            const x = (this.deltaEncoded ? this.baseX[point] : 0) + keyframes[offset + 0];
-            const y = (this.deltaEncoded ? this.baseY[point] : 0) + keyframes[offset + 1];
-            const z = (this.deltaEncoded ? this.baseZ[point] : 0) + keyframes[offset + 2];
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            minZ = Math.min(minZ, z);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-            maxZ = Math.max(maxZ, z);
+        for (let frame = 0; frame < this.nativeManifest.keyframeCount; frame++) {
+            sampleNativeMotionSource({
+                source: this.motionSource,
+                pointCount,
+                keyframeCount: this.nativeManifest.keyframeCount,
+                channels: this.nativeManifest.motion.channels,
+                time: this.nativeManifest.keyframeCount <= 1 ? 0 : frame / (this.nativeManifest.keyframeCount - 1),
+                out: this.sampledMotion
+            });
+            for (let point = 0; point < pointCount; point++) {
+                const offset = point * this.pointStride;
+                const x = (this.deltaEncoded ? this.baseX[point] : 0) + this.sampledMotion[offset + 0];
+                const y = (this.deltaEncoded ? this.baseY[point] : 0) + this.sampledMotion[offset + 1];
+                const z = (this.deltaEncoded ? this.baseZ[point] : 0) + this.sampledMotion[offset + 2];
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                minZ = Math.min(minZ, z);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+                maxZ = Math.max(maxZ, z);
+            }
         }
 
         this.sequenceBound.center.set((minX + maxX) * 0.5, (minY + maxY) * 0.5, (minZ + maxZ) * 0.5);

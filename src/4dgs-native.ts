@@ -51,6 +51,21 @@ type Native4DGSSources = {
     motion: Native4DGSFileSource;
 };
 
+type Native4DGSDenseMotionSource = {
+    kind: 'dense';
+    keyframes: Float32Array;
+};
+
+type Native4DGSPropertyDeltaMotionSource = {
+    kind: 'property-delta';
+    manifest: Native4DGSManifest;
+    records: Map<string, Native4DGSPropertyRecord>;
+    readers: Map<string, (index: number) => number>;
+    payload: Uint8Array;
+};
+
+type Native4DGSMotionSource = Native4DGSDenseMotionSource | Native4DGSPropertyDeltaMotionSource;
+
 type SampleNativePositionsOptions = {
     keyframes: Float32Array;
     pointCount: number;
@@ -61,6 +76,10 @@ type SampleNativePositionsOptions = {
 
 type SampleNativeMotionOptions = SampleNativePositionsOptions & {
     channels: Native4DGSMotionChannel[];
+};
+
+type SampleNativeMotionSourceOptions = Omit<SampleNativeMotionOptions, 'keyframes'> & {
+    source: Native4DGSMotionSource;
 };
 
 const nativeMotionChannelSizes: Record<Native4DGSMotionChannel, number> = {
@@ -402,7 +421,7 @@ const createDeltaReader = (payload: Uint8Array, record: Native4DGSPropertyRecord
     return (index: number) => view.getInt16(index * 2, true);
 };
 
-const decodePropertyDeltaMotionBuffer = async (buffer: ArrayBuffer, manifest: Native4DGSManifest) => {
+const decodePropertyDeltaMotionSource = async (buffer: ArrayBuffer, manifest: Native4DGSManifest): Promise<Native4DGSPropertyDeltaMotionSource> => {
     if (!manifest.propertyRecords) {
         throw new Error('Native 4DGS property-delta manifest is missing propertyRecords');
     }
@@ -412,27 +431,61 @@ const decodePropertyDeltaMotionBuffer = async (buffer: ArrayBuffer, manifest: Na
     const header = JSON.parse(headerText) as { records: Native4DGSPropertyRecord[] };
     const records = new Map(header.records.map(record => [record.name, record]));
     const payload = data.subarray(4 + headerLength);
+    const readers = new Map<string, (index: number) => number>();
+    for (const record of records.values()) {
+        if (record.mode !== 'constant') {
+            readers.set(record.name, createDeltaReader(payload, record));
+        }
+    }
+    return {
+        kind: 'property-delta',
+        manifest,
+        records,
+        readers,
+        payload
+    };
+};
+
+const samplePropertyDeltaMotionSource = (source: Native4DGSPropertyDeltaMotionSource, options: SampleNativeMotionOptions) => {
+    const manifest = source.manifest;
     const channels = manifest.motion.channels;
     const stride = getNativeMotionStride(channels);
-    const result = new Float32Array(getNativeMotionFloatCount(manifest));
+    const frameStride = manifest.pointCount * stride;
+    const out = options.out;
+    const clamped = Math.max(0, Math.min(1, options.time));
+    const position = clamped * (manifest.keyframeCount - 1);
+    const frame0 = Math.floor(position);
+    const frame1 = Math.min(manifest.keyframeCount - 1, frame0 + 1);
+    const alpha = position - frame0;
+
+    if (out.length < frameStride) {
+        throw new Error('Native 4DGS output buffer is too small');
+    }
+    out.fill(0, 0, frameStride);
 
     const writeProperty = (propertyName: string, channel: Native4DGSMotionChannel, component: number) => {
         const channelOffset = getNativeMotionChannelOffset(channels, channel);
         if (channelOffset < 0) {
             return;
         }
-        const record = records.get(propertyName);
+        const record = source.records.get(propertyName);
         if (!record || record.mode === 'constant') {
             return;
         }
-        const readDelta = createDeltaReader(payload, record);
-        for (let frame = 1; frame < manifest.keyframeCount; frame++) {
-            const srcFrame = frame - 1;
-            const frameBase = frame * manifest.pointCount * stride;
-            const payloadFrameBase = srcFrame * manifest.pointCount;
-            for (let point = 0; point < manifest.pointCount; point++) {
-                result[frameBase + point * stride + channelOffset + component] = readDelta(payloadFrameBase + point) * record.scale[0];
+        const readDelta = source.readers.get(record.name);
+        if (!readDelta) {
+            throw new Error(`Native 4DGS property-delta reader is missing for ${record.name}`);
+        }
+        const sampleFrame = (frame: number, point: number) => {
+            if (frame === 0) {
+                return 0;
             }
+            return readDelta((frame - 1) * manifest.pointCount + point) * record.scale[0];
+        };
+        for (let point = 0; point < manifest.pointCount; point++) {
+            const value0 = sampleFrame(frame0, point);
+            const value1 = sampleFrame(frame1, point);
+            out[point * stride + channelOffset + component] = value0 * (1 - alpha) + value1 * alpha;
         }
     };
 
@@ -446,8 +499,35 @@ const decodePropertyDeltaMotionBuffer = async (buffer: ArrayBuffer, manifest: Na
     writeProperty('rot_1', 'rotation', 1);
     writeProperty('rot_2', 'rotation', 2);
     writeProperty('rot_3', 'rotation', 3);
+};
 
+const decodePropertyDeltaMotionBuffer = async (buffer: ArrayBuffer, manifest: Native4DGSManifest) => {
+    const source = await decodePropertyDeltaMotionSource(buffer, manifest);
+    const result = new Float32Array(getNativeMotionFloatCount(manifest));
+    const frameStride = manifest.pointCount * getNativeMotionStride(manifest.motion.channels);
+    const sampled = new Float32Array(frameStride);
+    for (let frame = 0; frame < manifest.keyframeCount; frame++) {
+        samplePropertyDeltaMotionSource(source, {
+            keyframes: result,
+            pointCount: manifest.pointCount,
+            keyframeCount: manifest.keyframeCount,
+            channels: manifest.motion.channels,
+            time: manifest.keyframeCount <= 1 ? 0 : frame / (manifest.keyframeCount - 1),
+            out: sampled
+        });
+        result.set(sampled, frame * frameStride);
+    }
     return result;
+};
+
+const decodeNativeMotionSourceAsync = async (buffer: ArrayBuffer, manifest: Native4DGSManifest): Promise<Native4DGSMotionSource> => {
+    if (manifest.motion.encoding === 'property-delta-v3') {
+        return decodePropertyDeltaMotionSource(buffer, manifest);
+    }
+    return {
+        kind: 'dense',
+        keyframes: decodeNativeMotionBuffer(buffer, manifest.motion.encoding, getNativeMotionFloatCount(manifest))
+    };
 };
 
 const decodeNativeMotionBufferAsync = async (buffer: ArrayBuffer, manifest: Native4DGSManifest) => {
@@ -496,6 +576,24 @@ const sampleNativeMotion = (options: SampleNativeMotionOptions) => {
     }
 };
 
+const sampleNativeMotionSource = (options: SampleNativeMotionSourceOptions) => {
+    if (options.source.kind === 'dense') {
+        sampleNativeMotion({
+            ...options,
+            keyframes: options.source.keyframes
+        });
+        return;
+    }
+    samplePropertyDeltaMotionSource(options.source, {
+        keyframes: new Float32Array(0),
+        pointCount: options.pointCount,
+        keyframeCount: options.keyframeCount,
+        channels: options.channels,
+        time: options.time,
+        out: options.out
+    });
+};
+
 const sampleNativePositions = (options: SampleNativePositionsOptions) => {
     sampleNativeMotion({
         ...options,
@@ -508,6 +606,7 @@ export type {
     Native4DGSSources,
     Native4DGSFileSource,
     Native4DGSMotionChannel,
+    Native4DGSMotionSource,
     Native4DGSPropertyRecord
 };
 
@@ -518,6 +617,7 @@ export {
     collectNative4DGSLocalSources,
     decodeNativeMotionBuffer,
     decodeNativeMotionBufferAsync,
+    decodeNativeMotionSourceAsync,
     formatNative4DGSMotionSummary,
     getNativeMotionFloatCount,
     getNativeMotionByteLength,
@@ -525,5 +625,6 @@ export {
     getNativeMotionChannelOffset,
     isNativeMotionDeltaEncoded,
     sampleNativeMotion,
+    sampleNativeMotionSource,
     sampleNativePositions
 };

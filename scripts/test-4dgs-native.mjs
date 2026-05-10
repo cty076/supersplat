@@ -28,6 +28,7 @@ const {
     getNativeMotionByteLength,
     getNativeMotionStride,
     sampleNativeMotion,
+    sampleNativeMotionSource,
     sampleNativePositions
 } = mod;
 
@@ -92,6 +93,20 @@ assert.equal(mod.isNative4DGSFormat('4dgs-baked-sequence'), false);
         zlibManifest
     );
     assert.deepEqual(Array.from(zlibDecoded), Array.from(decoded));
+
+    const source = await mod.decodeNativeMotionSourceAsync(motion.buffer, manifest);
+    assert.equal(source.kind, 'property-delta');
+    assert.equal('keyframes' in source, false);
+    const sampled = new Float32Array(20);
+    sampleNativeMotionSource({
+        source,
+        pointCount: manifest.pointCount,
+        keyframeCount: manifest.keyframeCount,
+        channels: manifest.motion.channels,
+        time: 1,
+        out: sampled
+    });
+    assert.deepEqual(Array.from(sampled), Array.from(decoded.slice(20, 40)));
 
     const truncated = motion.slice(0, motion.length - 1);
     await assert.rejects(
@@ -169,11 +184,36 @@ assert.equal(mod.isNative4DGSFormat('4dgs-baked-sequence'), false);
 }
 
 {
+    const manifest = parseNative4DGSManifest({
+        format: '4dgs-native-trajectory',
+        version: 1,
+        sceneName: 'half-source',
+        pointCount: 1,
+        keyframeCount: 4,
+        frameCount: 4,
+        frameRate: 30,
+        baseFile: 'base.ply',
+        motionFile: 'motion.bin',
+        motion: {
+            encoding: 'float16-le',
+            layout: 'keyframes-points-xyz',
+            channels: ['xyz']
+        }
+    });
     const halfValues = new Uint16Array([0x0000, 0x3c00, 0xc000, 0x3800]);
     const decoded = decodeNativeMotionBuffer(halfValues.buffer, 'float16-le', 4);
 
     assert.ok(decoded instanceof Float32Array);
     assert.deepEqual(Array.from(decoded), [0, 1, -2, 0.5]);
+
+    const sourceHalfValues = new Uint16Array([
+        0x0000, 0x3c00, 0xc000,
+        0x3800, 0x0000, 0x3c00,
+        0xc000, 0x3800, 0x0000,
+        0x3c00, 0xc000, 0x3800
+    ]);
+    const source = await mod.decodeNativeMotionSourceAsync(sourceHalfValues.buffer, manifest);
+    assert.equal(source.kind, 'dense');
 }
 
 {
