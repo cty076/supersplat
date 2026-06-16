@@ -39,7 +39,7 @@ const registerNative4DGSEvents = (events: Events, scene: Scene) => {
     events.function('native4dgs.load', async (options: Native4DGSLoadOptions) => {
         const { manifest, sources } = options;
         console.info(`Native 4DGS loading ${manifest.sceneName}: ${manifest.pointCount} points, ${manifest.keyframeCount} keyframes, ${manifest.motion.encoding}`);
-        events.fire('progressStart', '加载 4DGS Native 包');
+        events.fire('progressStart', '加载 Native 4DGS 包');
         try {
             events.fire('progressUpdate', { text: '读取运动数据', progress: 5 });
             const motionBuffer = await readSourceArrayBuffer(sources.motion);

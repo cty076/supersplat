@@ -358,7 +358,19 @@ const getNativeMotionByteLength = (manifest: Native4DGSManifest) => {
 };
 
 const formatNative4DGSMotionSummary = (manifest: Native4DGSManifest) => {
-    return `${manifest.pointCount} pts | ${manifest.keyframeCount} keys | ${manifest.motion.channels.join('+')} | ${nativeMotionEncodingLabels[manifest.motion.encoding]}`;
+    const parts = [
+        `${manifest.pointCount} pts`,
+        `${manifest.keyframeCount} keys`,
+        manifest.motion.channels.join('+'),
+        nativeMotionEncodingLabels[manifest.motion.encoding]
+    ];
+    if (manifest.motionCodec) {
+        parts.push(manifest.motionCodec);
+    }
+    if (manifest.propertyRecords) {
+        parts.push(`${manifest.propertyRecords.length} props`);
+    }
+    return parts.join(' | ');
 };
 
 const halfFloatToNumber = (value: number) => {

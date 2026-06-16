@@ -63,6 +63,7 @@ assert.equal(mod.isNative4DGSFormat('4dgs-baked-sequence'), false);
     assert.equal(manifest.motion.encoding, 'property-delta-v3');
     assert.equal(manifest.pointCount, 2);
     assert.equal(manifest.keyframeCount, 2);
+    assert.equal(formatNative4DGSMotionSummary(manifest), '2 pts | 2 keys | xyz+scale+rotation | PDELTA | raw | 6 props');
 
     const payload = new Uint8Array(14);
     new Int16Array(payload.buffer, 0, 2).set([1, 2]);

@@ -21,10 +21,8 @@ class StatusBar extends Container {
 
         super(args);
 
-        // Track the currently active panel
         let activePanel = '';
 
-        // Toggle buttons for panels
         const timelineButton = new Button({
             class: 'status-bar-toggle',
             text: localize('status-bar.timeline').toUpperCase()
@@ -35,7 +33,6 @@ class StatusBar extends Container {
             text: localize('status-bar.splat-data').toUpperCase()
         });
 
-        // Panel toggle logic
         const setActivePanel = (panel: string) => {
             activePanel = panel;
             timelineButton.dom.classList[panel === 'timeline' ? 'add' : 'remove']('active');
@@ -51,7 +48,6 @@ class StatusBar extends Container {
             setActivePanel(activePanel === 'splatData' ? '' : 'splatData');
         });
 
-        // Right section: stats
         const statsContainer = new Container({
             class: 'status-bar-stats'
         });
@@ -94,7 +90,6 @@ class StatusBar extends Container {
         this.append(fourDGSStatus);
         this.append(statsContainer);
 
-        // register tooltips
         const shortcutManager: ShortcutManager = events.invoke('shortcutManager');
         const tooltip = (localeKey: string, shortcutId?: string) => {
             const text = localize(localeKey);
@@ -110,7 +105,6 @@ class StatusBar extends Container {
         tooltips.register(timelineButton, tooltip('tooltip.status-bar.timeline', 'timelinePanel.toggle'), 'top');
         tooltips.register(splatDataButton, tooltip('tooltip.status-bar.splat-data', 'dataPanel.toggle'), 'top');
 
-        // Handle keyboard shortcuts for panel toggles
         events.on('dataPanel.toggle', () => {
             setActivePanel(activePanel === 'splatData' ? '' : 'splatData');
         });
@@ -125,7 +119,8 @@ class StatusBar extends Container {
         const formatNativeSummary = (manifest: Native4DGSManifest) => {
             return formatNative4DGSMotionSummary(manifest)
             .replace(`${manifest.pointCount} pts`, `${formatInteger(manifest.pointCount)} 点`)
-            .replace(`${manifest.keyframeCount} keys`, `${formatInteger(manifest.keyframeCount)} 关键帧`);
+            .replace(`${manifest.keyframeCount} keys`, `${formatInteger(manifest.keyframeCount)} 关键帧`)
+            .replace(`${manifest.propertyRecords?.length ?? 0} props`, `${formatInteger(manifest.propertyRecords?.length ?? 0)} 属性`);
         };
 
         const updateFourDGSStatus = () => {
@@ -174,7 +169,6 @@ class StatusBar extends Container {
             updateFourDGSStatus();
         });
 
-        // Update stats from splat state
         let splat: Splat;
 
         const updateStats = () => {
